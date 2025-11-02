@@ -583,9 +583,10 @@ class HomeFireFighterFragment : Fragment(), OnMapReadyCallback {
     }
 
     // ---------- Complete ----------
+    // ---------- Complete ----------
     private fun markCompleted() {
-        val key = selectedIncidentKey ?: return
-        val inc = incidents[key] ?: return
+        val selKey = selectedIncidentKey ?: return
+        val inc = incidents[selKey] ?: return
 
         val db = FirebaseDatabase.getInstance().reference
 
@@ -596,55 +597,74 @@ class HomeFireFighterFragment : Fragment(), OnMapReadyCallback {
             Source.SMS   -> "SmsReport"
         }
 
-        // Per-station structure (roots + their FF account keys)
-        val allStations: Map<String, String> = mapOf(
-            "CapstoneFlare/CanocotanFireStation"  to "CanocotanFireFighterAccount",
-            "CapstoneFlare/LaFilipinaFireStation" to "LaFilipinaFireFighterAccount",
-            "CapstoneFlare/MabiniFireStation"     to "MabiniFireFighterAccount"
+        // All station roots you support
+        val stationRoots = listOf(
+            "CapstoneFlare/CanocotanFireStation",
+            "CapstoneFlare/LaFilipinaFireStation",
+            "CapstoneFlare/MabiniFireStation"
         )
 
-        // Build updates only for paths that already have this report
+        // We’ll check TWO shapes per station:
+        // A) <root>/FireFighter/FireFighterAccount/AllReport/<Type>/<id>
+        // B) <root>/AllReport/<Type>/<id>
         val updates = hashMapOf<String, Any>()
-        var pending = allStations.size
+        var pendingChecks = stationRoots.size * 2
         var anyFound = false
 
-        allStations.forEach { (root, acct) ->
-            val path = "$root/FireFighter/FireFighterAccount/AllReport/$typeNode/${inc.id}"
-            db.child(path).addListenerForSingleValueEvent(object : ValueEventListener {
-                override fun onDataChange(snap: DataSnapshot) {
-                    if (snap.exists()) {
-                        anyFound = true
-                        updates["$path/status"] = "Completed"
-                        // updates["$path/completedAt"] = ServerValue.TIMESTAMP
-                    }
-                    if (--pending == 0) {
-                        if (!anyFound) {
-                            Toast.makeText(requireContext(), "Nothing to update", Toast.LENGTH_SHORT).show()
-                            return
-                        }
-                        db.updateChildren(updates)
-                            .addOnSuccessListener {
-                                Toast.makeText(requireContext(), "Marked as Completed (all stations)", Toast.LENGTH_SHORT).show()
-                                Log.d(TAG, "Completed id=${inc.id} src=${inc.source} across stations")
-                            }
-                            .addOnFailureListener { e ->
-                                Toast.makeText(requireContext(), "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
-                                Log.w(TAG, "Complete failed: ${e.message}")
-                            }
-                    }
+        fun maybeFlush() {
+            if (pendingChecks != 0) return
+            if (!anyFound) {
+                Toast.makeText(requireContext(), "Nothing to update", Toast.LENGTH_SHORT).show()
+                return
+            }
+            db.updateChildren(updates)
+                .addOnSuccessListener {
+                    Toast.makeText(requireContext(), "Marked as Completed", Toast.LENGTH_SHORT).show()
+                    Log.d(TAG, "Completed id=${inc.id} src=${inc.source} across stations")
                 }
+                .addOnFailureListener { e ->
+                    Toast.makeText(requireContext(), "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                    Log.w(TAG, "Complete failed: ${e.message}")
+                }
+        }
 
-                override fun onCancelled(error: DatabaseError) {
-                    Log.w(TAG, "Read failed: ${error.message}")
-                    if (--pending == 0) {
-                        if (updates.isEmpty()) {
-                            Toast.makeText(requireContext(), "Read failed: ${error.message}", Toast.LENGTH_SHORT).show()
-                        }
+        stationRoots.forEach { root ->
+            // A) Firefighter account bucket
+            val ffPath = "$root/FireFighter/FireFighterAccount/AllReport/$typeNode/${inc.id}"
+            db.child(ffPath).addListenerForSingleValueEvent(object : ValueEventListener {
+                override fun onDataChange(s: DataSnapshot) {
+                    if (s.exists()) {
+                        anyFound = true
+                        updates["$ffPath/status"] = "Completed"
+                        updates["$ffPath/completedAt"] = ServerValue.TIMESTAMP
                     }
+                    if (--pendingChecks == 0) maybeFlush()
+                }
+                override fun onCancelled(error: DatabaseError) {
+                    Log.w(TAG, "FF check failed: ${error.message}")
+                    if (--pendingChecks == 0) maybeFlush()
+                }
+            })
+
+            // B) Station rollup bucket
+            val rollupPath = "$root/AllReport/$typeNode/${inc.id}"
+            db.child(rollupPath).addListenerForSingleValueEvent(object : ValueEventListener {
+                override fun onDataChange(s: DataSnapshot) {
+                    if (s.exists()) {
+                        anyFound = true
+                        updates["$rollupPath/status"] = "Completed"
+                        updates["$rollupPath/completedAt"] = ServerValue.TIMESTAMP
+                    }
+                    if (--pendingChecks == 0) maybeFlush()
+                }
+                override fun onCancelled(error: DatabaseError) {
+                    Log.w(TAG, "Rollup check failed: ${error.message}")
+                    if (--pendingChecks == 0) maybeFlush()
                 }
             })
         }
     }
+
 
     // ---------- OSRM routing ----------
     private fun shouldRecomputeRoutes(origin: LatLng, dest: LatLng): Boolean {
