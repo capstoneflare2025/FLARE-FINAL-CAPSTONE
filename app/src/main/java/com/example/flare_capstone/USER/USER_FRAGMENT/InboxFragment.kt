@@ -1,25 +1,18 @@
-package com.example.flare_capstone
+package com.example.flare_capstone.USER.USER_FRAGMENT
 
-import android.app.Activity
-import android.content.ActivityNotFoundException
-import android.content.Context
-import android.content.Intent
-import android.graphics.Rect
+import android.R
 import android.os.Bundle
-import android.speech.RecognizerIntent
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.view.inputmethod.InputMethodManager
 import android.widget.ArrayAdapter
 import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.core.widget.addTextChangedListener
 import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.LinearLayoutManager
-import androidx.recyclerview.widget.LinearSnapHelper
-import androidx.recyclerview.widget.RecyclerView
+import com.example.flare_capstone.DashboardActivity
+import com.example.flare_capstone.ResponseMessage
+import com.example.flare_capstone.ResponseMessageAdapter
 import com.example.flare_capstone.databinding.FragmentInboxBinding
 import com.google.android.material.tabs.TabLayout
 import com.google.firebase.auth.FirebaseAuth
@@ -97,7 +90,7 @@ class InboxFragment : Fragment() {
             "Sms Report"
         )
         binding.categoryDropdown.setAdapter(
-            ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, categories)
+            ArrayAdapter(requireContext(), R.layout.simple_list_item_1, categories)
         )
         binding.categoryDropdown.setText("All Report", false)
         currentCategoryFilter = CategoryFilter.ALL
@@ -311,7 +304,7 @@ class InboxFragment : Fragment() {
     private fun updateInboxBadge(count: Int) {
         if (!isAdded) return
         (activity as? DashboardActivity)?.let { act ->
-            val badge = act.binding.bottomNavigation.getOrCreateBadge(R.id.inboxFragment)
+            val badge = act.binding.bottomNavigation.getOrCreateBadge(com.example.flare_capstone.R.id.inboxFragment)
             badge.isVisible = count > 0
             badge.number = count
             badge.maxCharacterCount = 3

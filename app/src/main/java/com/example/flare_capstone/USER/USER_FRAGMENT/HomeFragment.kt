@@ -1,16 +1,4 @@
-package com.example.flare_capstone
-
-/* =========================================================
- * HomeFragment.kt (OSRM • draw route only on station tap)
- * - Default camera: Philippines until we have a fix
- * - Auto-center on user at city zoom when a fix arrives
- * - Single active route with proper toggle (tap again to hide)
- * - Prevents duplicate/stale routes via request generation guard
- * - Robust resets so it works after returning to this Fragment
- * - Tagum geofence uses res/raw/tagum_boundary.geojson (polygon only)
- *   • No circle fallback
- *   • No boundary overlay drawn on the map
- * ========================================================= */
+package com.example.flare_capstone.USER.USER_FRAGMENT
 
 import android.Manifest
 import android.annotation.SuppressLint
@@ -38,27 +26,53 @@ import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.DrawableCompat
 import androidx.drawerlayout.widget.DrawerLayout
 import androidx.fragment.app.Fragment
+import androidx.navigation.fragment.findNavController
 import com.bumptech.glide.Glide
 import com.bumptech.glide.load.resource.bitmap.CircleCrop
+import com.example.flare_capstone.AboutAppActivity
+import com.example.flare_capstone.EmergencyMedicalServicesActivity
+import com.example.flare_capstone.FireLevelActivity
+import com.example.flare_capstone.MainActivity
+import com.example.flare_capstone.MyReportActivity
+import com.example.flare_capstone.OtherEmergencyActivity
+import com.example.flare_capstone.R
 import com.example.flare_capstone.databinding.FragmentHomeBinding
-import com.google.android.gms.location.*
+import com.google.android.gms.location.FusedLocationProviderClient
+import com.google.android.gms.location.LocationCallback
+import com.google.android.gms.location.LocationRequest
+import com.google.android.gms.location.LocationResult
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.GoogleMap
 import com.google.android.gms.maps.OnMapReadyCallback
 import com.google.android.gms.maps.SupportMapFragment
-import com.google.android.gms.maps.model.*
+import com.google.android.gms.maps.model.BitmapDescriptor
+import com.google.android.gms.maps.model.BitmapDescriptorFactory
+import com.google.android.gms.maps.model.Dot
+import com.google.android.gms.maps.model.Gap
+import com.google.android.gms.maps.model.LatLng
+import com.google.android.gms.maps.model.Marker
+import com.google.android.gms.maps.model.MarkerOptions
+import com.google.android.gms.maps.model.Polyline
+import com.google.android.gms.maps.model.PolylineOptions
+import com.google.android.gms.tasks.CancellationTokenSource
 import com.google.android.material.appbar.MaterialToolbar
 import com.google.android.material.navigation.NavigationView
 import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.database.*
-import kotlin.math.pow
+import com.google.firebase.database.DataSnapshot
+import com.google.firebase.database.DatabaseError
+import com.google.firebase.database.DatabaseReference
+import com.google.firebase.database.FirebaseDatabase
+import com.google.firebase.database.ValueEventListener
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.atomic.AtomicInteger
-import androidx.navigation.fragment.findNavController
+import kotlin.math.pow
 
 class HomeFragment : Fragment(), OnMapReadyCallback {
 
@@ -266,11 +280,26 @@ class HomeFragment : Fragment(), OnMapReadyCallback {
                     if (!canSubmitReportWithToasts()) {
                         // gate already toasts
                     } else {
-                        startActivity(Intent(requireContext(), EmergencyMedicalServicesActivity::class.java))
+                        startActivity(
+                            Intent(
+                                requireContext(),
+                                EmergencyMedicalServicesActivity::class.java
+                            )
+                        )
                     }
                 }
-                R.id.nav_my_reports -> startActivity(Intent(requireContext(), MyReportActivity::class.java))
-                R.id.nav_about -> startActivity(Intent(requireContext(), AboutAppActivity::class.java))
+                R.id.nav_my_reports -> startActivity(
+                    Intent(
+                        requireContext(),
+                        MyReportActivity::class.java
+                    )
+                )
+                R.id.nav_about -> startActivity(
+                    Intent(
+                        requireContext(),
+                        AboutAppActivity::class.java
+                    )
+                )
 
             }
             drawer?.closeDrawers(); true
@@ -919,7 +948,7 @@ class HomeFragment : Fragment(), OnMapReadyCallback {
                         cameraFittedOnce = true
                     }
                 } else {
-                    val cts = com.google.android.gms.tasks.CancellationTokenSource()
+                    val cts = CancellationTokenSource()
                     fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, cts.token)
                         .addOnSuccessListener { fresh ->
                             if (fresh != null) {
@@ -946,9 +975,9 @@ class HomeFragment : Fragment(), OnMapReadyCallback {
         try {
             val ins = ctx.resources.openRawResource(R.raw.tagum_boundary)
             val text = ins.bufferedReader().use { it.readText() }
-            val root = org.json.JSONObject(text)
+            val root = JSONObject(text)
 
-            fun arrToRing(arr: org.json.JSONArray): List<LatLng> {
+            fun arrToRing(arr: JSONArray): List<LatLng> {
                 val out = ArrayList<LatLng>(arr.length())
                 for (i in 0 until arr.length()) {
                     val pt = arr.getJSONArray(i)

@@ -97,6 +97,7 @@
         <activity android:name=".UserGuideActivity"/>
         <activity android:name=".MyReportActivity"/>
         <activity android:name=".FireStationInfoActivity"/>
+        <activity android:name=".FireFighterReportActivity"/>
 
 
     </application>

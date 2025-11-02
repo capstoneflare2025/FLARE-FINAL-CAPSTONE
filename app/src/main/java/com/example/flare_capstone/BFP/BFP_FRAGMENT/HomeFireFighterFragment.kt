@@ -1,7 +1,9 @@
-package com.example.flare_capstone
+package com.example.flare_capstone.BFP.BFP_FRAGMENT
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.location.Location
 import android.os.Bundle
 import android.util.Log
@@ -12,17 +14,38 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.DrawableRes
 import androidx.core.content.ContextCompat
-import androidx.core.graphics.drawable.DrawableCompat
 import androidx.fragment.app.Fragment
+import com.example.flare_capstone.R
 import com.example.flare_capstone.databinding.FragmentHomeFireFighterBinding
-import com.google.android.gms.location.*
+import com.google.android.gms.location.FusedLocationProviderClient
+import com.google.android.gms.location.LocationCallback
+import com.google.android.gms.location.LocationRequest
+import com.google.android.gms.location.LocationResult
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.GoogleMap
 import com.google.android.gms.maps.OnMapReadyCallback
 import com.google.android.gms.maps.SupportMapFragment
-import com.google.android.gms.maps.model.*
+import com.google.android.gms.maps.model.BitmapDescriptor
+import com.google.android.gms.maps.model.BitmapDescriptorFactory
+import com.google.android.gms.maps.model.Dot
+import com.google.android.gms.maps.model.Gap
+import com.google.android.gms.maps.model.LatLng
+import com.google.android.gms.maps.model.LatLngBounds
+import com.google.android.gms.maps.model.Marker
+import com.google.android.gms.maps.model.MarkerOptions
+import com.google.android.gms.maps.model.Polyline
+import com.google.android.gms.maps.model.PolylineOptions
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.database.*
+import com.google.firebase.database.ChildEventListener
+import com.google.firebase.database.DataSnapshot
+import com.google.firebase.database.DatabaseError
+import com.google.firebase.database.FirebaseDatabase
+import com.google.firebase.database.Query
+import com.google.firebase.database.ServerValue
+import com.google.firebase.database.ValueEventListener
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
@@ -30,16 +53,12 @@ import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
 import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 import java.util.concurrent.Executors
 import kotlin.math.max
 import kotlin.math.roundToInt
-import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.Color
-import com.google.android.gms.maps.model.BitmapDescriptor
-import com.google.android.gms.maps.model.BitmapDescriptorFactory
 
 class HomeFireFighterFragment : Fragment(), OnMapReadyCallback {
 
@@ -71,7 +90,8 @@ class HomeFireFighterFragment : Fragment(), OnMapReadyCallback {
     // Pending external selection
     private var pendingSelect: Pair<Source, String>? = null
 
-    // Firebase base
+    // Firebase base (per-station structure)
+    private var stationRoot: String? = null
     private var stationAccountKey: String? = null
     private var reportsBase: String? = null
 
@@ -80,7 +100,7 @@ class HomeFireFighterFragment : Fragment(), OnMapReadyCallback {
 
     // All incidents in memory
     private data class Incident(
-        val key: String,         // Source/id composite
+        val key: String,
         val id: String,
         val source: Source,
         val latLng: LatLng,
@@ -146,15 +166,18 @@ class HomeFireFighterFragment : Fragment(), OnMapReadyCallback {
         }
         mapFragment.getMapAsync(this)
 
-        // Station account from email -> account key
-        stationAccountKey = stationAccountForEmail(auth.currentUser?.email?.lowercase())
-        if (stationAccountKey == null) {
+        // Resolve station root + account from email
+        val info = stationInfoForEmail(auth.currentUser?.email?.lowercase())
+        if (info == null) {
             Log.w(TAG, "Unknown firefighter email; abort")
             return
         }
+        stationRoot = info.first
+        stationAccountKey = info.second
 
-        // Base path for all 4 report types
-        reportsBase = "TagumCityCentralFireStation/FireFighter/AllFireFighterAccount/$stationAccountKey/AllReport"
+        // Base path for all 4 report types under new structure:
+        // <StationRoot>/FireFighter/FireFighterAccount/<AccountKey>/AllReport
+        reportsBase = "${stationRoot}/FireFighter/FireFighterAccount/${stationAccountKey}/AllReport"
 
         binding.completed.setOnClickListener { markCompleted() }
 
@@ -177,12 +200,12 @@ class HomeFireFighterFragment : Fragment(), OnMapReadyCallback {
         }
     }
 
-    private fun stationAccountForEmail(email: String?): String? {
+    private fun stationInfoForEmail(email: String?): Pair<String, String>? {
         val e = email ?: return null
         return when (e) {
-            "tcwestfiresubstation@gmail.com" -> "MabiniFireFighterAccount"
-            "lafilipinafire@gmail.com" -> "LaFilipinaFireFighterAccount"
-            "bfp_tagumcity@yahoo.com" -> "CanocotanFireFighterAccount"
+            "tccfsff123@gmail.com" -> "CapstoneFlare/CanocotanFireStation" to "CanocotanFireFighterAccount"
+            "lffssff123@gmail.com" -> "CapstoneFlare/LaFilipinaFireStation" to "LaFilipinaFireFighterAccount"
+            "tcwfssff123@gmail.com" -> "CapstoneFlare/MabiniFireStation" to "MabiniFireFighterAccount"
             else -> null
         }
     }
@@ -347,21 +370,20 @@ class HomeFireFighterFragment : Fragment(), OnMapReadyCallback {
             val lng = last.longitude
 
             updatePins(LatLng(lat, lng), currentReportPoint)
-            updateLiveLocation(lat, lng)  // 🔥 <-- new line
+            updateLiveLocation(lat, lng)
         }
     }
-
 
     private fun startLocationUpdates() {
         if (!hasLocationPermission()) return
 
         val req = LocationRequest.Builder(
             Priority.PRIORITY_HIGH_ACCURACY,
-            1_000L                 // desired interval ~1s
+            1_000L
         )
-            .setMinUpdateIntervalMillis(1_000L) // don't go slower than 1s
-            .setMaxUpdateDelayMillis(0L)        // deliver ASAP, no batching
-            .setMinUpdateDistanceMeters(1f)     // optional: only if moved ≥1 m
+            .setMinUpdateIntervalMillis(1_000L)
+            .setMaxUpdateDelayMillis(0L)
+            .setMinUpdateDistanceMeters(1f)
             .build()
 
         try {
@@ -370,7 +392,6 @@ class HomeFireFighterFragment : Fragment(), OnMapReadyCallback {
             Log.w(TAG, "requestLocationUpdates SecurityException")
         }
     }
-
 
     private fun stopLocationUpdates() {
         try { fusedLocation.removeLocationUpdates(locCallback) } catch (_: Exception) {}
@@ -548,7 +569,6 @@ class HomeFireFighterFragment : Fragment(), OnMapReadyCallback {
         } catch (_: Exception) { null }
     }
 
-    // Normalize seconds→milliseconds
     private fun readTimestampMillis(node: DataSnapshot): Long? {
         val raw = getLongRelaxed(node, "acceptedAt")
             ?: getLongRelaxed(node, "timeStamp")
@@ -574,68 +594,55 @@ class HomeFireFighterFragment : Fragment(), OnMapReadyCallback {
             Source.SMS   -> "SmsReport"
         }
 
-        // central & current station bases
-        val baseCentral = "TagumCityCentralFireStation/AllReport"
-        val myBaseFF = reportsBase ?: return // e.g. .../AllFireFighterAccount/<thisStation>/AllReport
-
-        // all known station account keys (use your real list)
-        val allStations = listOf(
-            "CanocotanFireFighterAccount",
-            "LaFilipinaFireFighterAccount",
-            "MabiniFireFighterAccount"
+        // Per-station structure (roots + their FF account keys)
+        val allStations: Map<String, String> = mapOf(
+            "CapstoneFlare/CanocotanFireStation"  to "CanocotanFireFighterAccount",
+            "CapstoneFlare/LaFilipinaFireStation" to "LaFilipinaFireFighterAccount",
+            "CapstoneFlare/MabiniFireStation"     to "MabiniFireFighterAccount"
         )
 
-        // firefighter-accounts root
-        val ffRoot = "TagumCityCentralFireStation/FireFighter/AllFireFighterAccount"
+        // Build updates only for paths that already have this report
+        val updates = hashMapOf<String, Any>()
+        var pending = allStations.size
+        var anyFound = false
 
-        // First read the AllFireFighterAccount tree once so we only update nodes that exist
-        db.child(ffRoot).addListenerForSingleValueEvent(object : ValueEventListener {
-            override fun onDataChange(snap: DataSnapshot) {
-                val updates = hashMapOf<String, Any>()
-
-                // 1) Central canonical record
-                updates["$baseCentral/$typeNode/${inc.id}/status"] = "Completed"
-                // Optional timestamps:
-                // updates["$baseCentral/$typeNode/${inc.id}/completedAt"] = ServerValue.TIMESTAMP
-
-                // 2) Current station copy (safe even if also covered below)
-                updates["$myBaseFF/$typeNode/${inc.id}/status"] = "Completed"
-                // updates["$myBaseFF/$typeNode/${inc.id}/completedAt"] = ServerValue.TIMESTAMP
-
-                // 3) Every *other* station that has this incident → flip to Completed too
-                for (station in allStations) {
-                    val path = "$station/AllReport/$typeNode/${inc.id}"
-                    if (snap.child(path).exists()) {
-                        updates["$ffRoot/$path/status"] = "Completed"
-                        // updates["$ffRoot/$path/completedAt"] = ServerValue.TIMESTAMP
+        allStations.forEach { (root, acct) ->
+            val path = "$root/FireFighter/FireFighterAccount/$acct/AllReport/$typeNode/${inc.id}"
+            db.child(path).addListenerForSingleValueEvent(object : ValueEventListener {
+                override fun onDataChange(snap: DataSnapshot) {
+                    if (snap.exists()) {
+                        anyFound = true
+                        updates["$path/status"] = "Completed"
+                        // updates["$path/completedAt"] = ServerValue.TIMESTAMP
+                    }
+                    if (--pending == 0) {
+                        if (!anyFound) {
+                            Toast.makeText(requireContext(), "Nothing to update", Toast.LENGTH_SHORT).show()
+                            return
+                        }
+                        db.updateChildren(updates)
+                            .addOnSuccessListener {
+                                Toast.makeText(requireContext(), "Marked as Completed (all stations)", Toast.LENGTH_SHORT).show()
+                                Log.d(TAG, "Completed id=${inc.id} src=${inc.source} across stations")
+                            }
+                            .addOnFailureListener { e ->
+                                Toast.makeText(requireContext(), "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                                Log.w(TAG, "Complete failed: ${e.message}")
+                            }
                     }
                 }
 
-                if (updates.isEmpty()) {
-                    Toast.makeText(requireContext(), "Nothing to update", Toast.LENGTH_SHORT).show()
-                    return
+                override fun onCancelled(error: DatabaseError) {
+                    Log.w(TAG, "Read failed: ${error.message}")
+                    if (--pending == 0) {
+                        if (updates.isEmpty()) {
+                            Toast.makeText(requireContext(), "Read failed: ${error.message}", Toast.LENGTH_SHORT).show()
+                        }
+                    }
                 }
-
-                db.updateChildren(updates)
-                    .addOnSuccessListener {
-                        Toast.makeText(requireContext(), "Marked as Completed (all copies)", Toast.LENGTH_SHORT).show()
-                        Log.d(TAG, "Completed id=${inc.id} src=${inc.source} (central + all stations)")
-                        // Your child listeners will prune the marker if the item disappears or status filters change
-                    }
-                    .addOnFailureListener { e ->
-                        Toast.makeText(requireContext(), "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
-                        Log.w(TAG, "Complete failed: ${e.message}")
-                    }
-            }
-
-            override fun onCancelled(error: DatabaseError) {
-                Toast.makeText(requireContext(), "Read failed: ${error.message}", Toast.LENGTH_SHORT).show()
-                Log.w(TAG, "Snapshot read failed: ${error.message}")
-            }
-        })
+            })
+        }
     }
-
-
 
     // ---------- OSRM routing ----------
     private fun shouldRecomputeRoutes(origin: LatLng, dest: LatLng): Boolean {
@@ -773,7 +780,6 @@ class HomeFireFighterFragment : Fragment(), OnMapReadyCallback {
         drawnRoutes.clear()
     }
 
-    // Polyline precision 5 decoder
     private fun decodePolylineE5ToLatLng(encoded: String): List<LatLng> {
         if (encoded.isEmpty()) return emptyList()
         val path = ArrayList<LatLng>()
@@ -875,7 +881,7 @@ class HomeFireFighterFragment : Fragment(), OnMapReadyCallback {
                     append("Report time: $reportTime")
                 }
 
-                com.google.android.material.dialog.MaterialAlertDialogBuilder(requireContext())
+                MaterialAlertDialogBuilder(requireContext())
                     .setTitle(title)
                     .setMessage(body)
                     .setPositiveButton("OK", null)
@@ -891,16 +897,16 @@ class HomeFireFighterFragment : Fragment(), OnMapReadyCallback {
 
     private fun formatLocalTime(epochMs: Long): String {
         return try {
-            val sdf = java.text.SimpleDateFormat("hh:mm a", java.util.Locale.getDefault())
-            sdf.timeZone = java.util.TimeZone.getDefault()
-            sdf.format(java.util.Date(epochMs))
+            val sdf = SimpleDateFormat("hh:mm a", Locale.getDefault())
+            sdf.timeZone = TimeZone.getDefault()
+            sdf.format(Date(epochMs))
         } catch (_: Exception) { "-" }
     }
 
     private fun updateLiveLocation(lat: Double, lng: Double) {
         val key = stationAccountKey ?: return
-        val path =
-            "TagumCityCentralFireStation/FireFighter/AllFireFighterAccount/$key/liveLocation"
+        val root = stationRoot ?: return
+        val path = "$root/FireFighter/FireFighterAccount/$key/liveLocation"
 
         val ref = FirebaseDatabase.getInstance().getReference(path)
         val data = mapOf(
@@ -917,6 +923,4 @@ class HomeFireFighterFragment : Fragment(), OnMapReadyCallback {
                 Log.w(TAG, "Failed to update live location: ${e.message}")
             }
     }
-
-
 }

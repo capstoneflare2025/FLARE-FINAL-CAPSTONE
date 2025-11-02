@@ -9,6 +9,7 @@ import android.view.ViewGroup
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.bumptech.glide.Glide
+import com.example.flare_capstone.FireFighterResponseActivity
 import com.google.android.material.imageview.ShapeableImageView
 import com.google.firebase.database.FirebaseDatabase
 import java.text.SimpleDateFormat

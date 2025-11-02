@@ -22,6 +22,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.navigation.fragment.NavHostFragment
 import androidx.navigation.ui.setupWithNavController
+import com.example.flare_capstone.FireFighterResponseActivity
 import com.example.flare_capstone.databinding.ActivityDashboardFireFighterBinding
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.*

@@ -434,29 +434,39 @@ class OtherEmergencyActivity : AppCompatActivity() {
 
     private fun sendReportRecord(currentTime: Long, type: String) {
         val uid = auth.currentUser?.uid ?: run {
-            Toast.makeText(this, "User not authenticated", Toast.LENGTH_SHORT).show(); return
+            Toast.makeText(this, "User not authenticated", Toast.LENGTH_SHORT).show()
+            return
         }
 
         FirebaseDatabase.getInstance().getReference("Users").child(uid).get()
             .addOnSuccessListener { snap ->
                 val user = snap.getValue(User::class.java) ?: run {
-                    Toast.makeText(this, "User data not found", Toast.LENGTH_SHORT).show(); return@addOnSuccessListener
+                    Toast.makeText(this, "User data not found", Toast.LENGTH_SHORT).show()
+                    return@addOnSuccessListener
                 }
 
                 val dateFmt = SimpleDateFormat("MM/dd/yyyy", Locale.getDefault())
                 val timeFmt = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
-                val photoB64 = capturedFile?.takeIf { it.exists() }?.let { compressAndEncodeBase64(it) } ?: ""
 
+                val photoB64 = capturedFile?.takeIf { it.exists() }?.let { compressAndEncodeBase64(it) } ?: ""
+                val dateStr = dateFmt.format(Date(currentTime))
+                val timeStr = timeFmt.format(Date(currentTime))
+                val addressText = if (exactLocation.isNotBlank())
+                    exactLocation
+                else
+                    "Within Tagum vicinity – https://www.google.com/maps?q=$latitude,$longitude"
+
+                // Keep your current schema (strings for lat/lon)
                 val base = mutableMapOf<String, Any?>(
                     "emergencyType" to type,
                     "name" to user.name.orEmpty(),
                     "contact" to user.contact.orEmpty(),
-                    "date" to dateFmt.format(Date(currentTime)),
-                    "reportTime" to timeFmt.format(Date(currentTime)),
+                    "date" to dateStr,
+                    "reportTime" to timeStr,
                     "latitude" to latitude.toString(),
                     "longitude" to longitude.toString(),
                     "location" to "https://www.google.com/maps?q=$latitude,$longitude",
-                    "exactLocation" to exactLocation,
+                    "exactLocation" to addressText,
                     "timestamp" to currentTime,
                     "status" to "Pending",
                     "read" to false,
@@ -465,96 +475,43 @@ class OtherEmergencyActivity : AppCompatActivity() {
 
                 val db = FirebaseDatabase.getInstance().reference
 
-                // Central write
-                val central = base.toMutableMap().apply { this["fireStationName"] = "Tagum City Central Fire Station" }
-                val centralRef = db.child("TagumCityCentralFireStation")
-                    .child("AllReport")
-                    .child("OtherEmergencyReport")
-                    .push()
-
+                // Resolve nearest station and write ONLY there
                 readAllStationProfiles { stations ->
                     if (stations.isEmpty()) {
-                        centralRef.setValue(central)
-                            .addOnSuccessListener {
-                                // SMS → Central only
-                                val addressText = if (exactLocation.isNotBlank()) exactLocation
-                                else "https://www.google.com/maps?q=$latitude,$longitude"
-                                val userName = user.name.orEmpty()
-                                val dateStr = dateFmt.format(Date(currentTime))
-                                val timeStr = timeFmt.format(Date(currentTime))
-
-                                readCentralProfile { _, centralContact ->
-                                    if (centralContact.isNotBlank()) {
-                                        sendStationSMS(
-                                            stationContact = centralContact,
-                                            userName = userName,
-                                            type = type,
-                                            date = dateStr,
-                                            time = timeStr,
-                                            addressOrMap = addressText
-                                        )
-                                    }
-                                    Toast.makeText(this, "Report submitted to central (nearest unavailable).", Toast.LENGTH_SHORT).show()
-                                    startActivity(Intent(this, DashboardActivity::class.java)); finish()
-                                }
-                            }
-                            .addOnFailureListener { e ->
-                                Toast.makeText(this, "Failed to submit: ${e.message}", Toast.LENGTH_SHORT).show()
-                            }
+                        Toast.makeText(this, "No station profiles configured. Cannot submit report.", Toast.LENGTH_LONG).show()
                         return@readAllStationProfiles
                     }
 
-                    val nearest = stations.minByOrNull { distanceMeters(latitude, longitude, it.lat, it.lon) }!!
+                    val nearest = stations.minByOrNull {
+                        distanceMeters(latitude, longitude, it.lat, it.lon)
+                    }!!
 
-                    centralRef.setValue(central)
+                    val payload = base.toMutableMap().apply {
+                        this["fireStationName"] = nearest.name
+                    }
+
+                    db.child(nearest.node)
+                        .child("AllReport")
+                        .child("OtherEmergencyReport")
+                        .push()
+                        .setValue(payload)
                         .addOnSuccessListener {
-                            val nearestPayload = base.toMutableMap().apply { this["fireStationName"] = nearest.name }
-                            db.child(nearest.node)
-                                .child("AllReport")
-                                .child("OtherEmergencyReport")
-                                .push()
-                                .setValue(nearestPayload)
-                                .addOnSuccessListener {
-                                    // SMS both: nearest + central
-                                    val addressText = if (exactLocation.isNotBlank()) exactLocation
-                                    else "https://www.google.com/maps?q=$latitude,$longitude"
-                                    val userName = user.name.orEmpty()
-                                    val dateStr = dateFmt.format(Date(currentTime))
-                                    val timeStr = timeFmt.format(Date(currentTime))
+                            // SMS ONLY to nearest station (if contact present)
+                            val userName = user.name.orEmpty()
+                            if (nearest.contact.isNotBlank()) {
+                                sendStationSMS(
+                                    stationContact = nearest.contact,
+                                    userName = userName,
+                                    type = type,
+                                    date = dateStr,
+                                    time = timeStr,
+                                    addressOrMap = addressText
+                                )
+                            }
 
-//                                    // 1) Nearest
-//                                    if (nearest.contact.isNotBlank()) {
-//                                        sendStationSMS(
-//                                            stationContact = nearest.contact,
-//                                            userName = userName,
-//                                            type = type,
-//                                            date = dateStr,
-//                                            time = timeStr,
-//                                            addressOrMap = addressText
-//                                        )
-//                                    }
-
-                                    // 2) Central
-                                    readCentralProfile { _, centralContact ->
-                                        if (centralContact.isNotBlank()) {
-                                            sendStationSMS(
-                                                stationContact = centralContact,
-                                                userName = userName,
-                                                type = type,
-                                                date = dateStr,
-                                                time = timeStr,
-                                                addressOrMap = addressText
-                                            )
-                                        }
-
-                                        Toast.makeText(this, "Report submitted Please wait for responder.", Toast.LENGTH_SHORT).show()
-                                        startActivity(Intent(this, DashboardActivity::class.java)); finish()
-                                    }
-                                }
-                                .addOnFailureListener { e ->
-                                    Toast.makeText(this, "Central saved. Nearest failed: ${e.message}", Toast.LENGTH_LONG).show()
-                                    startActivity(Intent(this, DashboardActivity::class.java)); finish()
-                                }
+                            Toast.makeText(this, "Report submitted to ${nearest.name}. Please wait for responder.", Toast.LENGTH_SHORT).show()
+                            startActivity(Intent(this, DashboardActivity::class.java))
+                            finish()
                         }
                         .addOnFailureListener { e ->
                             Toast.makeText(this, "Failed to submit: ${e.message}", Toast.LENGTH_SHORT).show()
@@ -565,6 +522,7 @@ class OtherEmergencyActivity : AppCompatActivity() {
                 Toast.makeText(this, "Failed to fetch user data: ${it.message}", Toast.LENGTH_SHORT).show()
             }
     }
+
 
     /* ===== Station profiles & distance helpers ===== */
     private fun readAllStationProfiles(onDone: (List<StationInfo>) -> Unit) {
@@ -729,19 +687,4 @@ class OtherEmergencyActivity : AppCompatActivity() {
         }
     }
 
-    private fun readCentralProfile(onDone: (name: String, contact: String) -> Unit) {
-        val db = FirebaseDatabase.getInstance().reference
-        db.child("TagumCityCentralFireStation")
-            .child("Profile")
-            .get()
-            .addOnSuccessListener { s ->
-                val name = s.child("name").value?.toString()?.ifBlank { "Tagum City Central Fire Station" }
-                    ?: "Tagum City Central Fire Station"
-                val contact = s.child("contact").value?.toString().orEmpty()
-                onDone(name, contact)
-            }
-            .addOnFailureListener {
-                onDone("Tagum City Central Fire Station", "")
-            }
-    }
 }

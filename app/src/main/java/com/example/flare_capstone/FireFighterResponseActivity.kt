@@ -1,16 +1,20 @@
 package com.example.flare_capstone
 
 import android.Manifest
+import android.animation.LayoutTransition
 import android.app.AlertDialog
-import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.media.MediaMetadataRetriever
 import android.media.MediaPlayer
 import android.media.MediaRecorder
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.MediaStore
 import android.text.Editable
 import android.text.TextWatcher
@@ -19,7 +23,6 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.inputmethod.InputMethodManager
-import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -27,15 +30,20 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
-import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.example.flare_capstone.databinding.ActivityFireFighterResponseBinding
 import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.database.*
+import com.google.firebase.database.DataSnapshot
+import com.google.firebase.database.DatabaseError
+import com.google.firebase.database.DatabaseReference
+import com.google.firebase.database.FirebaseDatabase
+import com.google.firebase.database.Query
+import com.google.firebase.database.ValueEventListener
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.text.SimpleDateFormat
-import java.util.*
+import java.util.Date
+import java.util.Locale
 
 /**
  * FireFighterResponseActivity (Base64-only media)
@@ -80,7 +88,7 @@ class FireFighterResponseActivity : AppCompatActivity() {
     private fun dp(v: Float): Int = (v * resources.displayMetrics.density).toInt()
     private var recordStartMs = 0L
     private var pauseStartMs = 0L
-    private val timerHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val timerHandler = Handler(Looper.getMainLooper())
     private val timerRunnable = object : Runnable {
         override fun run() {
             val elapsed = computeElapsedMs()
@@ -162,7 +170,7 @@ class FireFighterResponseActivity : AppCompatActivity() {
         resolveLoggedInAccountAndAttach()
 
         // Typing expansion
-        binding.chatInputArea.layoutTransition?.enableTransitionType(android.animation.LayoutTransition.CHANGING)
+        binding.chatInputArea.layoutTransition?.enableTransitionType(LayoutTransition.CHANGING)
 
         binding.messageInput.setOnFocusChangeListener { _, hasFocus ->
             val expanded = hasFocus || binding.messageInput.text?.isNotBlank() == true
@@ -178,7 +186,7 @@ class FireFighterResponseActivity : AppCompatActivity() {
             }
             override fun afterTextChanged(s: Editable?) {}
         })
-        ViewCompat.setOnApplyWindowInsetsListener(binding.chatInputArea) { _, insets ->
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(binding.chatInputArea) { _, insets ->
             val imeVisible = insets.isVisible(WindowInsetsCompat.Type.ime())
             val expanded = imeVisible || binding.messageInput.text?.isNotBlank() == true
             setExpandedUi(expanded)
@@ -203,7 +211,7 @@ class FireFighterResponseActivity : AppCompatActivity() {
         binding.galleryIcon.setOnClickListener {
             if (Build.VERSION.SDK_INT < 33 &&
                 ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)
-                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                != PackageManager.PERMISSION_GRANTED) {
                 reqPerms.launch(arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE))
             } else {
                 pickImage.launch("image/*")
@@ -214,9 +222,10 @@ class FireFighterResponseActivity : AppCompatActivity() {
         binding.voiceRecordIcon.setOnClickListener {
             val needs = mutableListOf(Manifest.permission.RECORD_AUDIO)
             if (Build.VERSION.SDK_INT < 33) {
-                needs += Manifest.permission.READ_EXTERNAL_STORAGE
+                needs += Manifest.permission.READ_EXTERNAL_STORAGE   // ✅ operator form
             }
             reqPerms.launch(needs.toTypedArray())
+
         }
         binding.recordPause.setOnClickListener { togglePauseResume() }
         binding.recordCancel.setOnClickListener { cancelRecording() }
@@ -277,7 +286,8 @@ class FireFighterResponseActivity : AppCompatActivity() {
         val adminRef = db.child(ROOT).child(ACCOUNTS).child(key).child(ADMIN_MESSAGES)
 
         adminRef.orderByChild("sender").equalTo("admin")
-            .addListenerForSingleValueEvent(object : ValueEventListener {
+            .addListenerForSingleValueEvent(object :
+                ValueEventListener {
                 override fun onDataChange(snap: DataSnapshot) {
                     if (!snap.hasChildren()) return
                     val updates = hashMapOf<String, Any>()
@@ -301,8 +311,10 @@ class FireFighterResponseActivity : AppCompatActivity() {
     private fun pushMessage(text: String? = null, imageBase64: String? = null, audioBase64: String? = null) {
         val key = accountKey ?: return
         val now = System.currentTimeMillis()
-        val date = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(now))
-        val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(now))
+        val date = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+            .format(Date(now))
+        val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+            .format(Date(now))
 
         // 🔸 IMPORTANT: messages sent by the firefighter are always read on their side
         val msg = HashMap<String, Any?>().apply {
@@ -338,7 +350,7 @@ class FireFighterResponseActivity : AppCompatActivity() {
     // ----- UI helpers -----
 
     private fun View.hideKeyboard() {
-        val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+        val imm = context.getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
         imm.hideSoftInputFromWindow(windowToken, 0)
     }
 
@@ -392,7 +404,8 @@ class FireFighterResponseActivity : AppCompatActivity() {
         val accountsQuery = db.child(ROOT).child(ACCOUNTS)
             .orderByChild("email").equalTo(email)
 
-        accountsQuery.addListenerForSingleValueEvent(object : ValueEventListener {
+        accountsQuery.addListenerForSingleValueEvent(object :
+            ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
                 if (!snapshot.hasChildren()) {
                     Toast.makeText(this@FireFighterResponseActivity, "Account not found for $email", Toast.LENGTH_SHORT).show()
@@ -526,9 +539,9 @@ class FireFighterResponseActivity : AppCompatActivity() {
             temp?.let { file ->
                 // Read duration once
                 try {
-                    val mmr = android.media.MediaMetadataRetriever()
+                    val mmr = MediaMetadataRetriever()
                     mmr.setDataSource(file.absolutePath)
-                    val durMs = mmr.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+                    val durMs = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
                     mmr.release()
                     timeView.text = formatDuration(durMs)
                 } catch (_: Exception) { /* keep default */ }
@@ -563,9 +576,11 @@ class FireFighterResponseActivity : AppCompatActivity() {
         // TIMESTAMP grouping (6h or new day)
         val showFull = shouldShowTimestamp(lastTimestamp, msg.timestamp)
         val stamp = if (showFull)
-            SimpleDateFormat("MMM d, yyyy - HH:mm", Locale.getDefault()).format(Date(msg.timestamp))
+            SimpleDateFormat("MMM d, yyyy - HH:mm", Locale.getDefault())
+                .format(Date(msg.timestamp))
         else
-            SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(msg.timestamp))
+            SimpleDateFormat("HH:mm", Locale.getDefault())
+                .format(Date(msg.timestamp))
 
         val tsView = TextView(this).apply {
             text = stamp
@@ -586,7 +601,7 @@ class FireFighterResponseActivity : AppCompatActivity() {
 
     private fun startRecordingMessengerStyle() {
         try {
-            recordFile = File.createTempFile("voice_", ".m4a", cacheDir)
+            recordFile = java.io.File.createTempFile("voice_", ".m4a", cacheDir)
             recorder = MediaRecorder().apply {
                 setAudioSource(MediaRecorder.AudioSource.MIC)
                 setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
@@ -668,7 +683,7 @@ class FireFighterResponseActivity : AppCompatActivity() {
         }
         try {
             val bytes = file.readBytes()
-            val audioB64 = Base64.encodeToString(bytes, Base64.DEFAULT)
+            val audioB64 = android.util.Base64.encodeToString(bytes, Base64.DEFAULT)
             pushMessage(audioBase64 = audioB64)   // audio-only message
         } catch (_: Exception) {
             Toast.makeText(this, "Failed to send recording", Toast.LENGTH_SHORT).show()
@@ -708,14 +723,14 @@ class FireFighterResponseActivity : AppCompatActivity() {
     private fun bitmapToBase64(bmp: Bitmap): String {
         val baos = ByteArrayOutputStream()
         bmp.compress(Bitmap.CompressFormat.JPEG, 90, baos)
-        return Base64.encodeToString(baos.toByteArray(), Base64.DEFAULT)
+        return android.util.Base64.encodeToString(baos.toByteArray(), Base64.DEFAULT)
     }
 
     private fun base64ToBitmap(b64: String?): Bitmap? {
         if (b64.isNullOrEmpty()) return null
         return try {
             val bytes = Base64.decode(b64, Base64.DEFAULT)
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
         } catch (_: Exception) { null }
     }
 

@@ -105,9 +105,9 @@ class LoginActivity : AppCompatActivity() {
      * Helpers
      * ========================================================= */
     private fun isFirefighter(emailLc: String): Boolean {
-        return emailLc == "bfp_tagumcity@yahoo.com" ||
-                emailLc == "tcwestfiresubstation@gmail.com" ||
-                emailLc == "lafilipinafire@gmail.com"
+        return emailLc == "tccfsff123@gmail.com" ||
+                emailLc == "tcwfssff123@gmail.com" ||
+                emailLc == "lffssff123@gmail.com"
     }
 
     /* =========================================================

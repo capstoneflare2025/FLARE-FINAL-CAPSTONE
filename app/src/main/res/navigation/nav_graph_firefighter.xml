@@ -6,21 +6,21 @@
 
     <fragment
         android:id="@+id/homeFragmentFireFighter"
-        android:name="com.example.flare_capstone.HomeFireFighterFragment"
+        android:name="com.example.flare_capstone.BFP.BFP_FRAGMENT.HomeFireFighterFragment"
         android:label="Home"
         tools:layout="@layout/fragment_home_fire_fighter" />
 
 
     <fragment
         android:id="@+id/inboxFragmentFireFighter"
-        android:name="com.example.flare_capstone.InboxFireFighterFragment"
+        android:name="com.example.flare_capstone.BFP.BFP_FRAGMENT.InboxFireFighterFragment"
         android:label="Home"
         tools:layout="@layout/fragment_inbox_fire_fighter" />
 
 
     <fragment
         android:id="@+id/profileFragmentFireFighter"
-        android:name="com.example.flare_capstone.ProfileFireFighterFragment"
+        android:name="com.example.flare_capstone.BFP.BFP_FRAGMENT.ProfileFireFighterFragment"
         android:label="Profile"
         tools:layout="@layout/fragment_profile_fire_fighter" />
 

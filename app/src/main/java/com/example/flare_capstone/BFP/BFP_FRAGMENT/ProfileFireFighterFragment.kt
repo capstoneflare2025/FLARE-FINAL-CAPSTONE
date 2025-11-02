@@ -1,20 +1,27 @@
-package com.example.flare_capstone
+package com.example.flare_capstone.BFP.BFP_FRAGMENT
 
 import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.util.Base64
 import android.os.Bundle
+import android.util.Base64
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.Toast
 import androidx.fragment.app.Fragment
+import com.example.flare_capstone.EditFirefighterProfileActivity
+import com.example.flare_capstone.FireFighterReportActivity
+import com.example.flare_capstone.MainActivity
+import com.example.flare_capstone.R
 import com.example.flare_capstone.databinding.FragmentProfileFireFighterBinding
 import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.database.*
+import com.google.firebase.database.DataSnapshot
+import com.google.firebase.database.DatabaseError
+import com.google.firebase.database.FirebaseDatabase
+import com.google.firebase.database.ValueEventListener
 
 class ProfileFireFighterFragment : Fragment() {
 
@@ -24,7 +31,8 @@ class ProfileFireFighterFragment : Fragment() {
     private val auth by lazy { FirebaseAuth.getInstance() }
     private val db by lazy { FirebaseDatabase.getInstance().reference }
 
-    // Example result: "TagumCityCentralFireStation/FireFighter/AllFireFighterAccount/MabiniFireFighterAccount"
+    // Example result:
+    // "CapstoneFlare/CanocotanFireStation/FireFighter/FireFighterAccount/CanocotanFireFighterAccount"
     private var matchedPath: String? = null
 
     override fun onCreateView(
@@ -60,7 +68,13 @@ class ProfileFireFighterFragment : Fragment() {
                 return@setOnClickListener
             }
             val intent = Intent(requireActivity(), EditFirefighterProfileActivity::class.java)
-            intent.putExtra(EditFirefighterProfileActivity.EXTRA_DB_PATH, path)
+            intent.putExtra(EditFirefighterProfileActivity.Companion.EXTRA_DB_PATH, path)
+            startActivity(intent)
+        }
+
+        // Reports screen
+        binding.editReport.setOnClickListener {
+            val intent = Intent(requireActivity(), FireFighterReportActivity::class.java)
             startActivity(intent)
         }
 
@@ -84,18 +98,19 @@ class ProfileFireFighterFragment : Fragment() {
     }
 
     /**
-     * Map the email → station account key, then read:
-     * TagumCityCentralFireStation/FireFighter/AllFireFighterAccount/<AccountKey>
+     * Map the email → (stationRoot, accountKey), then read:
+     * <StationRoot>/FireFighter/FireFighterAccount/<AccountKey>
      * Expected keys: email, name, contact, profile(Base64)
      */
     private fun loadAndBindProfile(emailLc: String) {
-        val accountKey = stationAccountForEmail(emailLc)
-        if (accountKey == null) {
+        val info = stationInfoForEmail(emailLc)
+        if (info == null) {
             bindUnknown(emailLc, reason = "No station mapping for $emailLc")
             return
         }
 
-        val path = "TagumCityCentralFireStation/FireFighter/AllFireFighterAccount/$accountKey"
+        val (stationRoot, accountKey) = info
+        val path = "$stationRoot/FireFighter/FireFighterAccount/$accountKey"
         matchedPath = path
 
         db.child(path).addListenerForSingleValueEvent(object : ValueEventListener {
@@ -133,17 +148,19 @@ class ProfileFireFighterFragment : Fragment() {
         })
     }
 
-    private fun stationAccountForEmail(email: String?): String? {
+    /**
+     * Returns Pair(stationRoot, accountKey) for a given firefighter email.
+     * Update mappings here as needed.
+     */
+    private fun stationInfoForEmail(email: String?): Pair<String, String>? {
         val e = email ?: return null
-        return when (e) {
+        return when (e.lowercase()) {
             // Mabini
-
-            "tcwestfiresubstation.com" -> "MabiniFireFighterAccount"
-
-            "lafilipinafire@gmail.com" -> "LaFilipinaFireFighterAccount"
-
-            "bfp_tagumcity@yahoo.com" -> "CanocotanFireFighterAccount"
-
+            "tcwfssff123@gmail.com" -> "CapstoneFlare/MabiniFireStation" to "MabiniFireFighterAccount"
+            // La Filipina
+            "lffssff123@gmail.com"  -> "CapstoneFlare/LaFilipinaFireStation" to "LaFilipinaFireFighterAccount"
+            // Canocotan
+            "tccfsff123@gmail.com"  -> "CapstoneFlare/CanocotanFireStation" to "CanocotanFireFighterAccount"
             else -> null
         }
     }
