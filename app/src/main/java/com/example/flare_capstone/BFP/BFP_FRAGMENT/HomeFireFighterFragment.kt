@@ -906,23 +906,23 @@ class HomeFireFighterFragment : Fragment(), OnMapReadyCallback {
     }
 
     private fun updateLiveLocation(lat: Double, lng: Double) {
-        val key = stationAccountKey ?: return
         val root = stationRoot ?: return
-        val path = "$root/FireFighter/FireFighterAccount/$key/liveLocation"
-
+        val path = "$root/FireFighter/FireFighterAccount/LiveLocation"
         val ref = FirebaseDatabase.getInstance().getReference(path)
+
         val data = mapOf(
             "latitude" to lat,
             "longitude" to lng,
-            "updatedAt" to ServerValue.TIMESTAMP
+            "updatedAt" to com.google.firebase.database.ServerValue.TIMESTAMP
         )
 
         ref.setValue(data)
             .addOnSuccessListener {
-                Log.d(TAG, "Live location updated for $key: ($lat, $lng)")
+                Log.d(TAG, "LiveLocation updated for FireFighterAccount @ $path: ($lat, $lng)")
             }
             .addOnFailureListener { e ->
-                Log.w(TAG, "Failed to update live location: ${e.message}")
+                Log.w(TAG, "Failed to update LiveLocation: ${e.message}")
             }
     }
+
 }

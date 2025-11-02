@@ -103,67 +103,46 @@ class ProfileFireFighterFragment : Fragment() {
      * Expected keys: email, name, contact, profile(Base64)
      */
     private fun loadAndBindProfile(emailLc: String) {
-        val info = stationInfoForEmail(emailLc)
-        if (info == null) {
-            bindUnknown(emailLc, reason = "No station mapping for $emailLc")
+        val stationRoot = stationRootForEmail(emailLc)    // map to ".../MabiniFireStation", etc.
+        if (stationRoot == null) {
+            bindUnknown(emailLc, "No station mapping for $emailLc")
             return
         }
 
-        val (stationRoot, accountKey) = info
-        val path = "$stationRoot/FireFighter/FireFighterAccount/$accountKey"
+        val path = "$stationRoot/FireFighter/FireFighterAccount"  // << no accountKey here
         matchedPath = path
 
         db.child(path).addListenerForSingleValueEvent(object : ValueEventListener {
             override fun onDataChange(snap: DataSnapshot) {
                 if (!isAdded || _binding == null) return
-
-                if (!snap.exists()) {
-                    bindUnknown(emailLc, reason = "Profile node missing at $path")
-                    return
-                }
+                if (!snap.exists()) { bindUnknown(emailLc, "Profile node missing at $path"); return }
 
                 val stationEmail = snap.child("email").getValue(String::class.java)?.trim()?.lowercase()
                 val name = snap.child("name").getValue(String::class.java) ?: "(No name)"
                 val contact = snap.child("contact").getValue(String::class.java) ?: "—"
                 val profileBase64 = snap.child("profile").getValue(String::class.java)
 
-                // If DB email is present and doesn't match, still show but warn.
-                if (!stationEmail.isNullOrBlank() && stationEmail != emailLc) {
-                    Toast.makeText(requireContext(), "Warning: profile email differs from signed-in email.", Toast.LENGTH_SHORT).show()
-                }
-
                 binding.fullyName.text = name
                 binding.fullName.text = stationEmail ?: emailLc
                 binding.contact.text = contact
 
-                convertBase64ToBitmap(profileBase64)?.let {
-                    binding.profileIcon.setImageBitmap(it)
-                } ?: binding.profileIcon.setImageResource(R.drawable.ic_default_profile)
+                convertBase64ToBitmap(profileBase64)?.let(binding.profileIcon::setImageBitmap)
+                    ?: binding.profileIcon.setImageResource(R.drawable.ic_default_profile)
             }
-
-            override fun onCancelled(error: DatabaseError) {
+            override fun onCancelled(e: DatabaseError) {
                 if (!isAdded || _binding == null) return
-                bindUnknown(emailLc, reason = "DB error: ${error.message}")
+                bindUnknown(emailLc, "DB error: ${e.message}")
             }
         })
     }
 
-    /**
-     * Returns Pair(stationRoot, accountKey) for a given firefighter email.
-     * Update mappings here as needed.
-     */
-    private fun stationInfoForEmail(email: String?): Pair<String, String>? {
-        val e = email ?: return null
-        return when (e.lowercase()) {
-            // Mabini
-            "tcwfssff123@gmail.com" -> "CapstoneFlare/MabiniFireStation" to "MabiniFireFighterAccount"
-            // La Filipina
-            "lffssff123@gmail.com"  -> "CapstoneFlare/LaFilipinaFireStation" to "LaFilipinaFireFighterAccount"
-            // Canocotan
-            "tccfsff123@gmail.com"  -> "CapstoneFlare/CanocotanFireStation" to "CanocotanFireFighterAccount"
-            else -> null
-        }
+    private fun stationRootForEmail(email: String?): String? = when (email?.lowercase()) {
+        "tcwfssff123@gmail.com" -> "CapstoneFlare/MabiniFireStation"
+        "lffssff123@gmail.com"  -> "CapstoneFlare/LaFilipinaFireStation"
+        "tccfsff123@gmail.com"  -> "CapstoneFlare/CanocotanFireStation"
+        else -> null
     }
+
 
     private fun bindUnknown(emailLc: String, reason: String) {
         binding.fullyName.text = "Unknown Firefighter"

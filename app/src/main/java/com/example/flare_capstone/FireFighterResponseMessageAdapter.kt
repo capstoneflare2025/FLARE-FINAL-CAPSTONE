@@ -2,7 +2,9 @@ package com.example.flare_capstone
 
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.graphics.BitmapFactory
 import android.graphics.Typeface
+import android.util.Base64
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -38,26 +40,19 @@ class FireFighterResponseMessageAdapter(
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
         val station = stationList[position]
 
-        // Name
-        holder.fireStationName.text = "Tagum City Central Fire Station"
+        // Name from data (no hard-coding)
+        holder.fireStationName.text = station.name
 
-
-        // Build a summary using mutually-exclusive fields from the latest message
-        // Assumes your FireFighterStation has fields:
-        //   lastMessage: String, hasImage: Boolean, hasAudio: Boolean, lastSender: String, isRead: Boolean
+        // Message preview
         val baseSummary = when {
             station.hasAudio -> "Sent a voice message."
             station.hasImage -> "Sent a photo."
             station.lastMessage.isNotBlank() -> station.lastMessage
             else -> "No recent message"
         }
-
-        // Prefix by sender role
         val preview = when {
-            station.lastSender.equals("admin", ignoreCase = true) ->
-                "Reply: $baseSummary"
-            station.lastSender.equals(station.name, ignoreCase = true) ->
-                "You: $baseSummary"
+            station.lastSender.equals("admin", ignoreCase = true) -> "Reply: $baseSummary"
+            station.lastSender.equals(station.name, ignoreCase = true) -> "You: $baseSummary"
             else -> baseSummary
         }
         holder.uid.text = preview
@@ -65,68 +60,66 @@ class FireFighterResponseMessageAdapter(
         // Timestamp
         holder.timestamp.text = if (station.timestamp > 0L) {
             SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date(station.timestamp))
-        } else {
-            ""
+        } else ""
+
+        // Profile image: URL or Base64
+        val p = station.profileUrl
+        when {
+            p.startsWith("http", true) -> {
+                Glide.with(holder.itemView.context)
+                    .load(p)
+                    .placeholder(R.drawable.station_logo)
+                    .into(holder.profileIcon)
+            }
+            p.isNotBlank() -> {
+                try {
+                    val bytes = Base64.decode(p, Base64.DEFAULT)
+                    val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    if (bmp != null) holder.profileIcon.setImageBitmap(bmp)
+                    else holder.profileIcon.setImageResource(R.drawable.station_logo)
+                } catch (_: Exception) {
+                    holder.profileIcon.setImageResource(R.drawable.station_logo)
+                }
+            }
+            else -> holder.profileIcon.setImageResource(R.drawable.station_logo)
         }
 
-        // Profile icon
-        if (station.profileUrl.isNotEmpty()) {
-            Glide.with(holder.itemView.context)
-                .load(station.profileUrl)
-                .placeholder(R.drawable.station_logo)
-                .into(holder.profileIcon)
-        } else {
-            holder.profileIcon.setImageResource(R.drawable.station_logo)
-        }
-
-        // Unread style — ONLY for unread admin replies
-        val isUnreadFromAdmin = !station.isRead &&
-                station.lastSender.equals("admin", ignoreCase = true)
-
+        // Unread style (admin replies only)
+        val isUnreadFromAdmin = station.hasUnreadAdminReply
         holder.unreadDot.visibility = if (isUnreadFromAdmin) View.VISIBLE else View.GONE
         holder.fireStationName.setTypeface(null, if (isUnreadFromAdmin) Typeface.BOLD else Typeface.NORMAL)
         holder.uid.setTypeface(null, if (isUnreadFromAdmin) Typeface.BOLD else Typeface.NORMAL)
 
-        // Click → open chat AND mark all admin messages as read for this account
+        // Click → open chat, then mark admin msgs read using the exact path
         holder.itemView.setOnClickListener {
             val ctx = holder.itemView.context
 
-            // Launch chat
-            val intent = Intent(ctx, FireFighterResponseActivity::class.java).apply {
-                val stationName = "Tagum City Central Fire Station"
-                putExtra("STATION_NAME", stationName)
-                putExtra("STATION_ID", station.id) // id == AllFireFighterAccount key
-            }
-            ctx.startActivity(intent)
+            // Launch chat with data we actually use
+            ctx.startActivity(
+                Intent(ctx, FireFighterResponseActivity::class.java).apply {
+                    putExtra("STATION_NAME", station.name)
+                    putExtra("ADMIN_MESSAGES_PATH", station.adminMessagesPath)
+                }
+            )
             onItemClick(station)
 
-            // Mark ALL unread admin messages for this station as read
-            val dbRef = FirebaseDatabase.getInstance()
-                .getReference("TagumCityCentralFireStation")
-                .child("FireFighter")
-                .child("AllFireFighterAccount")
-                .child(station.id)
-                .child("AdminMessages")
-
-            // Only admin messages; set isRead = true where false
-            dbRef.orderByChild("sender").equalTo("admin")
-                .get()
-                .addOnSuccessListener { snap ->
-                    for (msg in snap.children) {
-                        val isRead = msg.child("isRead").getValue(Boolean::class.java) ?: false
-                        if (!isRead) {
-                            msg.ref.child("isRead").setValue(true)
+            // Mark admin replies as read at this row's AdminMessages path
+            try {
+                val dbRef = FirebaseDatabase.getInstance().getReference(station.adminMessagesPath)
+                dbRef.orderByChild("sender").equalTo("admin")
+                    .get()
+                    .addOnSuccessListener { snap ->
+                        for (msg in snap.children) {
+                            val isRead = msg.child("isRead").getValue(Boolean::class.java) ?: false
+                            if (!isRead) msg.ref.child("isRead").setValue(true)
                         }
                     }
-                }
+            } catch (_: Throwable) {
+                // ignore; UI will refresh from live listeners
+            }
 
             // Local UI update so it un-bolds right away
-            // If your FireFighterStation.isRead is a 'var', this is fine; otherwise rebuild the item via copy in your list builder.
-            try {
-                station.isRead = true
-            } catch (_: Throwable) {
-                // If your model uses `val`, remove this and rely on your list refresh from Firebase.
-            }
+            try { station.isRead = true } catch (_: Throwable) {}
             notifyItemChanged(position)
         }
     }

@@ -30,15 +30,11 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.example.flare_capstone.databinding.ActivityFireFighterResponseBinding
 import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.database.DataSnapshot
-import com.google.firebase.database.DatabaseError
-import com.google.firebase.database.DatabaseReference
-import com.google.firebase.database.FirebaseDatabase
-import com.google.firebase.database.Query
-import com.google.firebase.database.ValueEventListener
+import com.google.firebase.database.*
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.text.SimpleDateFormat
@@ -48,31 +44,20 @@ import java.util.Locale
 /**
  * FireFighterResponseActivity (Base64-only media)
  *
- * - Reads/writes to:
- *   TagumCityCentralFireStation/FireFighter/AllFireFighterAccount/{accountKey}/AdminMessages
- * - Message schema (mutually exclusive payload):
+ * Reads/writes to the exact node provided by the adapter:
+ *   Intent extra "ADMIN_MESSAGES_PATH":
+ *   e.g. CapstoneFlare/CanocotanFireStation/FireFighter/FireFighterAccount/AdminMessages
+ *
+ * Message schema (mutually exclusive payload fields):
  *   Text:  { sender, timestamp, text }
  *   Image: { sender, timestamp, imageBase64 }
  *   Audio: { sender, timestamp, audioBase64 }
- *
- * UX:
- *  • Tap record -> record bar with live timer, pause/cancel/send
- *  • Typing -> expand input + show back icon to collapse
- *  • Pick/take photo -> confirmation dialog before send
- *  • Bubbles: text / image / audio (playable)
  */
 class FireFighterResponseActivity : AppCompatActivity() {
 
-    // ----- Firebase paths -----
-    private val ROOT = "TagumCityCentralFireStation"
-    private val ACCOUNTS = "FireFighter/AllFireFighterAccount"
-    private val ADMIN_MESSAGES = "AdminMessages"
-
-
-    // ----- View / Firebase -----
+    // ----- View & Firebase -----
     private lateinit var binding: ActivityFireFighterResponseBinding
-    private lateinit var db: DatabaseReference
-    private var accountKey: String? = null
+    private lateinit var adminMessagesRef: DatabaseReference
     private var accountName: String = ""
 
     // ----- Stream -----
@@ -104,13 +89,10 @@ class FireFighterResponseActivity : AppCompatActivity() {
     private var pendingImageBase64: String = ""
 
     private fun Int.dp() = (this * resources.displayMetrics.density).toInt()
-
     private fun maxBubbleWidthPx(): Int =
         (resources.displayMetrics.widthPixels * 0.7f).toInt() // ~70% like Messenger
-
     private fun maxImageHeightPx(): Int =
         (resources.displayMetrics.heightPixels * 0.35f).toInt() // cap tall images to 35% screen
-
 
     // ----- Activity Result contracts -----
     private val pickImage = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -134,7 +116,7 @@ class FireFighterResponseActivity : AppCompatActivity() {
         }
     }
 
-    // Permissions for microphone (and legacy external storage read for gallery pre-33)
+    // Permissions for mic (and legacy external read for gallery pre-33)
     private val reqPerms =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grant ->
             val mic = grant[Manifest.permission.RECORD_AUDIO] == true
@@ -151,9 +133,9 @@ class FireFighterResponseActivity : AppCompatActivity() {
         val imageBase64: String? = null,   // only for image
         val audioBase64: String? = null,   // only for audio
         val timestamp: Long = 0L,
-        val date: String? = null,          // optional, kept if you already write them
-        val time: String? = null,          // optional
-        val isRead: Boolean? = null        // optional
+        val date: String? = null,
+        val time: String? = null,
+        val isRead: Boolean? = null
     )
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -161,23 +143,33 @@ class FireFighterResponseActivity : AppCompatActivity() {
         binding = ActivityFireFighterResponseBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        db = FirebaseDatabase.getInstance().reference
-
         // Back
         binding.back.setOnClickListener { finish() }
 
-        // Resolve account
-        resolveLoggedInAccountAndAttach()
+        // Read extras from adapter
+        val adminPath = intent.getStringExtra("ADMIN_MESSAGES_PATH")
+        val stationName = intent.getStringExtra("STATION_NAME") ?: "Fire Station"
+        val senderNameExtra = intent.getStringExtra("SENDER_NAME") // optional
+
+        if (adminPath.isNullOrBlank()) {
+            Toast.makeText(this, "Missing chat path.", Toast.LENGTH_SHORT).show()
+            finish(); return
+        }
+
+        binding.fireStationName.text = stationName
+        accountName = senderNameExtra
+            ?: FirebaseAuth.getInstance().currentUser?.displayName
+                    ?: "You"
+
+        // Build the ref for ALL operations
+        adminMessagesRef = FirebaseDatabase.getInstance().getReference(adminPath)
 
         // Typing expansion
         binding.chatInputArea.layoutTransition?.enableTransitionType(LayoutTransition.CHANGING)
-
         binding.messageInput.setOnFocusChangeListener { _, hasFocus ->
             val expanded = hasFocus || binding.messageInput.text?.isNotBlank() == true
             setExpandedUi(expanded)
         }
-
-
         binding.messageInput.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
@@ -186,7 +178,7 @@ class FireFighterResponseActivity : AppCompatActivity() {
             }
             override fun afterTextChanged(s: Editable?) {}
         })
-        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(binding.chatInputArea) { _, insets ->
+        ViewCompat.setOnApplyWindowInsetsListener(binding.chatInputArea) { _, insets ->
             val imeVisible = insets.isVisible(WindowInsetsCompat.Type.ime())
             val expanded = imeVisible || binding.messageInput.text?.isNotBlank() == true
             setExpandedUi(expanded)
@@ -222,23 +214,21 @@ class FireFighterResponseActivity : AppCompatActivity() {
         binding.voiceRecordIcon.setOnClickListener {
             val needs = mutableListOf(Manifest.permission.RECORD_AUDIO)
             if (Build.VERSION.SDK_INT < 33) {
-                needs += Manifest.permission.READ_EXTERNAL_STORAGE   // ✅ operator form
+                needs += Manifest.permission.READ_EXTERNAL_STORAGE
             }
             reqPerms.launch(needs.toTypedArray())
-
         }
         binding.recordPause.setOnClickListener { togglePauseResume() }
         binding.recordCancel.setOnClickListener { cancelRecording() }
         binding.recordSend.setOnClickListener { finishRecordingAndSend() }
 
-        // Send text (or text+pending image / image only)
+        // Send text / image
         binding.sendButton.setOnClickListener {
             val txt = binding.messageInput.text?.toString()?.trim().orEmpty()
             when {
                 txt.isNotEmpty() && pendingImageBase64.isNotEmpty() -> {
-                    pushMessage(text = txt) // text only as requested (mutually exclusive)
-                    // If you want to send image as a separate message right after:
-                    pushMessage(imageBase64 = pendingImageBase64)
+                    pushMessage(text = txt) // send text
+                    pushMessage(imageBase64 = pendingImageBase64) // then image as separate message
                     pendingImageBase64 = ""
                     binding.messageInput.setText("")
                 }
@@ -253,15 +243,19 @@ class FireFighterResponseActivity : AppCompatActivity() {
                 else -> Toast.makeText(this, "Type a message or attach a photo.", Toast.LENGTH_SHORT).show()
             }
         }
+
+        // Start listening last (UI ready)
+        attachMessages()
     }
 
-    // Call again whenever the screen comes to foreground to be extra sure.
+    // Mark unread admin replies also when returning to foreground
     override fun onResume() {
         super.onResume()
         markUnreadAdminAsRead()
     }
+
     private fun attachMessages() {
-        msgRef = adminMessagesPath().orderByChild("timestamp")
+        msgRef = adminMessagesRef.orderByChild("timestamp")
         msgListener = object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
                 val list = mutableListOf<ChatMessage>()
@@ -272,7 +266,7 @@ class FireFighterResponseActivity : AppCompatActivity() {
                 list.sortBy { it.timestamp }
                 renderMessages(list)
 
-                // 👇 whenever we received/updated the thread, mark any unread admin msgs as read
+                // Mark any unread admin messages as read after rendering
                 markUnreadAdminAsRead()
             }
             override fun onCancelled(error: DatabaseError) {}
@@ -282,25 +276,21 @@ class FireFighterResponseActivity : AppCompatActivity() {
 
     // 🔹 Batch set isRead=true for all admin messages still marked unread
     private fun markUnreadAdminAsRead() {
-        val key = accountKey ?: return
-        val adminRef = db.child(ROOT).child(ACCOUNTS).child(key).child(ADMIN_MESSAGES)
-
-        adminRef.orderByChild("sender").equalTo("admin")
-            .addListenerForSingleValueEvent(object :
-                ValueEventListener {
+        adminMessagesRef
+            .orderByChild("sender").equalTo("admin")
+            .addListenerForSingleValueEvent(object : ValueEventListener {
                 override fun onDataChange(snap: DataSnapshot) {
                     if (!snap.hasChildren()) return
                     val updates = hashMapOf<String, Any>()
                     for (msg in snap.children) {
                         val isReadNow = msg.child("isRead").getValue(Boolean::class.java) ?: false
                         if (!isReadNow) {
-                            // update path: <messageKey>/isRead = true
                             val childKey = msg.key ?: continue
                             updates["$childKey/isRead"] = true
                         }
                     }
                     if (updates.isNotEmpty()) {
-                        adminRef.updateChildren(updates)
+                        adminMessagesRef.updateChildren(updates)
                     }
                 }
                 override fun onCancelled(error: DatabaseError) {}
@@ -309,20 +299,17 @@ class FireFighterResponseActivity : AppCompatActivity() {
 
     // ----- Posting (mutually exclusive fields) -----
     private fun pushMessage(text: String? = null, imageBase64: String? = null, audioBase64: String? = null) {
-        val key = accountKey ?: return
         val now = System.currentTimeMillis()
-        val date = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-            .format(Date(now))
-        val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
-            .format(Date(now))
+        val date = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(now))
+        val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(now))
 
-        // 🔸 IMPORTANT: messages sent by the firefighter are always read on their side
-        val msg = HashMap<String, Any?>().apply {
-            put("sender", accountName)
-            put("timestamp", now)
-            put("date", date)
-            put("time", time)
-            put("isRead", true)  // ✅ self-sent messages should not count as unread
+        val msg = hashMapOf<String, Any?>(
+            "sender" to accountName,
+            "timestamp" to now,
+            "date" to date,
+            "time" to time,
+            "isRead" to true // self-sent messages should be read
+        ).apply {
             when {
                 !text.isNullOrBlank() -> put("text", text)
                 !imageBase64.isNullOrBlank() -> put("imageBase64", imageBase64)
@@ -330,22 +317,19 @@ class FireFighterResponseActivity : AppCompatActivity() {
             }
         }
 
-        val payloadHasField =
-            msg.containsKey("text") || msg.containsKey("imageBase64") || msg.containsKey("audioBase64")
-        if (!payloadHasField) {
+        val hasPayload = msg["text"] != null || msg["imageBase64"] != null || msg["audioBase64"] != null
+        if (!hasPayload) {
             Toast.makeText(this, "Nothing to send.", Toast.LENGTH_SHORT).show()
             return
         }
 
-        db.child(ROOT).child(ACCOUNTS).child(key).child(ADMIN_MESSAGES)
-            .push().setValue(msg)
+        adminMessagesRef.push().setValue(msg)
             .addOnCompleteListener { t ->
                 if (!t.isSuccessful) {
                     Toast.makeText(this, "Send failed", Toast.LENGTH_SHORT).show()
                 }
             }
     }
-
 
     // ----- UI helpers -----
 
@@ -393,215 +377,11 @@ class FireFighterResponseActivity : AppCompatActivity() {
         }
     }
 
-    // ----- Account + messages -----
-
-    private fun resolveLoggedInAccountAndAttach() {
-        val email = FirebaseAuth.getInstance().currentUser?.email?.lowercase()
-        if (email.isNullOrBlank()) {
-            Toast.makeText(this, "Not signed in.", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val accountsQuery = db.child(ROOT).child(ACCOUNTS)
-            .orderByChild("email").equalTo(email)
-
-        accountsQuery.addListenerForSingleValueEvent(object :
-            ValueEventListener {
-            override fun onDataChange(snapshot: DataSnapshot) {
-                if (!snapshot.hasChildren()) {
-                    Toast.makeText(this@FireFighterResponseActivity, "Account not found for $email", Toast.LENGTH_SHORT).show()
-                    return
-                }
-                val first = snapshot.children.first()
-                accountKey = first.key
-                accountName = first.child("name").getValue(String::class.java) ?: (first.key ?: "You")
-                binding.fireStationName.text = "Tagum City Central Fire Station"
-                attachMessages()
-            }
-            override fun onCancelled(error: DatabaseError) {
-                Toast.makeText(this@FireFighterResponseActivity, "Failed: ${error.message}", Toast.LENGTH_SHORT).show()
-            }
-        })
-    }
-
-    private fun adminMessagesPath(): DatabaseReference {
-        val key = accountKey ?: error("Account not resolved yet")
-        return db.child(ROOT).child(ACCOUNTS).child(key).child(ADMIN_MESSAGES)
-    }
-
-
-    // ----- Render -----
-
-    private fun renderMessages(items: List<ChatMessage>) {
-        binding.scrollContent.removeAllViews()
-        lastTimestamp = 0L
-        items.forEach { msg ->
-            val isYou = msg.sender.equals(accountName, ignoreCase = true)
-            addMessageBubble(msg, isYou)
-        }
-        binding.scrollView.post { binding.scrollView.fullScroll(View.FOCUS_DOWN) }
-    }
-
-    private fun addMessageBubble(msg: ChatMessage, isYou: Boolean) {
-        val container = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = if (isYou) Gravity.END else Gravity.START
-            setPadding(20, 16, 20, 8)
-        }
-
-        // TEXT
-        msg.text?.let { text ->
-            val tv = TextView(this).apply {
-                this.text = text
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-                setTextColor(Color.WHITE)
-                setPadding(20, 14, 20, 14)
-                background = if (isYou)
-                    resources.getDrawable(R.drawable.received_message_bg, null)
-                else
-                    resources.getDrawable(R.drawable.sent_message_bg, null)
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                )
-            }
-            container.addView(tv)
-        }
-
-        // IMAGE (Base64)
-        msg.imageBase64?.let { b64 ->
-            val bmp = base64ToBitmap(b64)
-            if (bmp != null) {
-                val wrap = LinearLayout(this).apply {
-                    orientation = LinearLayout.VERTICAL
-                    background = if (isYou)
-                        resources.getDrawable(R.drawable.received_message_bg, null)
-                    else
-                        resources.getDrawable(R.drawable.sent_message_bg, null)
-                    setPadding(8, 8, 8, 8)
-                    layoutParams = LinearLayout.LayoutParams(
-                        (resources.displayMetrics.widthPixels * 0.65f).toInt(),
-                        LinearLayout.LayoutParams.WRAP_CONTENT
-                    ).apply { topMargin = if (container.childCount == 0) 0 else 8 }
-                }
-                val iv = ImageView(this).apply {
-                    setImageBitmap(bmp)
-                    adjustViewBounds = true
-                    scaleType = ImageView.ScaleType.CENTER_CROP
-                }
-                wrap.addView(iv)
-                container.addView(wrap)
-            }
-        }
-
-        // AUDIO (Base64 -> temp file -> player) — compact like Messenger
-        msg.audioBase64?.let { b64 ->
-            // Make a temp file once, so we can also read duration
-            val temp = try {
-                val bytes = Base64.decode(b64, Base64.DEFAULT)
-                File.createTempFile("audio_", ".m4a", cacheDir).apply { writeBytes(bytes) }
-            } catch (_: Exception) { null }
-
-            val row = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                background = if (isYou)
-                    resources.getDrawable(R.drawable.received_message_bg, null)
-                else
-                    resources.getDrawable(R.drawable.sent_message_bg, null)
-                setPadding(dp(14f), dp(10f), dp(14f), dp(10f))
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply { topMargin = if (container.childCount == 0) 0 else dp(8f) }
-                gravity = Gravity.CENTER_VERTICAL
-            }
-
-            // Small, fixed-size play button so it can't blow up the bubble
-            val playBtn = ImageView(this).apply {
-                setImageResource(R.drawable.ic_resume) // use a 24dp/vector if possible
-                layoutParams = LinearLayout.LayoutParams(dp(36f), dp(36f))
-                scaleType = ImageView.ScaleType.CENTER_INSIDE
-                adjustViewBounds = false
-            }
-
-            // Duration label
-            val timeView = TextView(this).apply {
-                text = "00:00"
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                setTextColor(Color.WHITE)
-                setPadding(dp(12f), 0, 0, 0)
-            }
-
-            row.addView(playBtn)
-            row.addView(timeView)
-            container.addView(row)
-
-            // If we have a file, read duration and wire the player
-            temp?.let { file ->
-                // Read duration once
-                try {
-                    val mmr = MediaMetadataRetriever()
-                    mmr.setDataSource(file.absolutePath)
-                    val durMs = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
-                    mmr.release()
-                    timeView.text = formatDuration(durMs)
-                } catch (_: Exception) { /* keep default */ }
-
-                val player = MediaPlayer()
-                activePlayers += player
-
-                playBtn.setOnClickListener {
-                    try {
-                        if (!player.isPlaying) {
-                            player.reset()
-                            player.setDataSource(file.absolutePath)
-                            player.prepare()
-                            player.start()
-                            playBtn.setImageResource(R.drawable.ic_pause)
-
-                            player.setOnCompletionListener {
-                                playBtn.setImageResource(R.drawable.ic_resume)
-                            }
-                        } else {
-                            player.pause()
-                            playBtn.setImageResource(R.drawable.ic_resume)
-                        }
-                    } catch (_: Exception) {
-                        Toast.makeText(this, "Cannot play audio", Toast.LENGTH_SHORT).show()
-                    }
-                }
-            }
-        }
-
-
-        // TIMESTAMP grouping (6h or new day)
-        val showFull = shouldShowTimestamp(lastTimestamp, msg.timestamp)
-        val stamp = if (showFull)
-            SimpleDateFormat("MMM d, yyyy - HH:mm", Locale.getDefault())
-                .format(Date(msg.timestamp))
-        else
-            SimpleDateFormat("HH:mm", Locale.getDefault())
-                .format(Date(msg.timestamp))
-
-        val tsView = TextView(this).apply {
-            text = stamp
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            setTextColor(Color.LTGRAY)
-            setPadding(8, 4, 8, 0)
-            gravity = if (showFull) Gravity.CENTER else (if (isYou) Gravity.END else Gravity.START)
-        }
-        container.addView(tsView)
-        if (showFull) lastTimestamp = msg.timestamp
-
-        binding.scrollContent.addView(container)
-        binding.scrollView.post { binding.scrollView.fullScroll(View.FOCUS_DOWN) }
-    }
-
-
     // ----- Recording flow -----
 
     private fun startRecordingMessengerStyle() {
         try {
-            recordFile = java.io.File.createTempFile("voice_", ".m4a", cacheDir)
+            recordFile = File.createTempFile("voice_", ".m4a", cacheDir)
             recorder = MediaRecorder().apply {
                 setAudioSource(MediaRecorder.AudioSource.MIC)
                 setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
@@ -683,7 +463,7 @@ class FireFighterResponseActivity : AppCompatActivity() {
         }
         try {
             val bytes = file.readBytes()
-            val audioB64 = android.util.Base64.encodeToString(bytes, Base64.DEFAULT)
+            val audioB64 = Base64.encodeToString(bytes, Base64.DEFAULT)
             pushMessage(audioBase64 = audioB64)   // audio-only message
         } catch (_: Exception) {
             Toast.makeText(this, "Failed to send recording", Toast.LENGTH_SHORT).show()
@@ -723,14 +503,14 @@ class FireFighterResponseActivity : AppCompatActivity() {
     private fun bitmapToBase64(bmp: Bitmap): String {
         val baos = ByteArrayOutputStream()
         bmp.compress(Bitmap.CompressFormat.JPEG, 90, baos)
-        return android.util.Base64.encodeToString(baos.toByteArray(), Base64.DEFAULT)
+        return Base64.encodeToString(baos.toByteArray(), Base64.DEFAULT)
     }
 
     private fun base64ToBitmap(b64: String?): Bitmap? {
         if (b64.isNullOrEmpty()) return null
         return try {
             val bytes = Base64.decode(b64, Base64.DEFAULT)
-            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
         } catch (_: Exception) { null }
     }
 
@@ -753,6 +533,166 @@ class FireFighterResponseActivity : AppCompatActivity() {
         val mm = sec / 60
         val ss = sec % 60
         return "%02d:%02d".format(mm, ss)
+    }
+
+    // ----- Render -----
+
+    private fun renderMessages(items: List<ChatMessage>) {
+        binding.scrollContent.removeAllViews()
+        lastTimestamp = 0L
+        items.forEach { msg ->
+            val isYou = msg.sender.equals(accountName, ignoreCase = true)
+            addMessageBubble(msg, isYou)
+        }
+        binding.scrollView.post { binding.scrollView.fullScroll(View.FOCUS_DOWN) }
+    }
+
+    private fun addMessageBubble(msg: ChatMessage, isYou: Boolean) {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = if (isYou) Gravity.END else Gravity.START
+            setPadding(20, 16, 20, 8)
+        }
+
+        // TEXT
+        msg.text?.let { text ->
+            val tv = TextView(this).apply {
+                this.text = text
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                setTextColor(Color.WHITE)
+                setPadding(20, 14, 20, 14)
+                background = if (isYou)
+                    resources.getDrawable(R.drawable.received_message_bg, null)
+                else
+                    resources.getDrawable(R.drawable.sent_message_bg, null)
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+            }
+            container.addView(tv)
+        }
+
+        // IMAGE (Base64)
+        msg.imageBase64?.let { b64 ->
+            val bmp = base64ToBitmap(b64)
+            if (bmp != null) {
+                val wrap = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    background = if (isYou)
+                        resources.getDrawable(R.drawable.received_message_bg, null)
+                    else
+                        resources.getDrawable(R.drawable.sent_message_bg, null)
+                    setPadding(8, 8, 8, 8)
+                    layoutParams = LinearLayout.LayoutParams(
+                        (resources.displayMetrics.widthPixels * 0.65f).toInt(),
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).apply { topMargin = if (container.childCount == 0) 0 else 8 }
+                }
+                val iv = ImageView(this).apply {
+                    setImageBitmap(bmp)
+                    adjustViewBounds = true
+                    scaleType = ImageView.ScaleType.CENTER_CROP
+                }
+                wrap.addView(iv)
+                container.addView(wrap)
+            }
+        }
+
+        // AUDIO (Base64 -> temp file -> player)
+        msg.audioBase64?.let { b64 ->
+            val temp = try {
+                val bytes = Base64.decode(b64, Base64.DEFAULT)
+                File.createTempFile("audio_", ".m4a", cacheDir).apply { writeBytes(bytes) }
+            } catch (_: Exception) { null }
+
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                background = if (isYou)
+                    resources.getDrawable(R.drawable.received_message_bg, null)
+                else
+                    resources.getDrawable(R.drawable.sent_message_bg, null)
+                setPadding(dp(14f), dp(10f), dp(14f), dp(10f))
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { topMargin = if (container.childCount == 0) 0 else dp(8f) }
+                gravity = Gravity.CENTER_VERTICAL
+            }
+
+            val playBtn = ImageView(this).apply {
+                setImageResource(R.drawable.ic_resume)
+                layoutParams = LinearLayout.LayoutParams(dp(36f), dp(36f))
+                scaleType = ImageView.ScaleType.CENTER_INSIDE
+                adjustViewBounds = false
+            }
+            val timeView = TextView(this).apply {
+                text = "00:00"
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                setTextColor(Color.WHITE)
+                setPadding(dp(12f), 0, 0, 0)
+            }
+
+            row.addView(playBtn)
+            row.addView(timeView)
+            container.addView(row)
+
+            temp?.let { file ->
+                try {
+                    val mmr = MediaMetadataRetriever()
+                    mmr.setDataSource(file.absolutePath)
+                    val durMs = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+                    mmr.release()
+                    timeView.text = formatDuration(durMs)
+                } catch (_: Exception) { /* keep default */ }
+
+                val player = MediaPlayer()
+                activePlayers += player
+
+                playBtn.setOnClickListener {
+                    try {
+                        if (!player.isPlaying) {
+                            player.reset()
+                            player.setDataSource(file.absolutePath)
+                            player.prepare()
+                            player.start()
+                            playBtn.setImageResource(R.drawable.ic_pause)
+
+                            player.setOnCompletionListener {
+                                playBtn.setImageResource(R.drawable.ic_resume)
+                            }
+                        } else {
+                            player.pause()
+                            playBtn.setImageResource(R.drawable.ic_resume)
+                        }
+                    } catch (_: Exception) {
+                        Toast.makeText(this, "Cannot play audio", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+
+        // TIMESTAMP grouping (6h or new day)
+        val showFull = shouldShowTimestamp(lastTimestamp, msg.timestamp)
+        val stamp = if (showFull)
+            SimpleDateFormat("MMM d, yyyy - HH:mm", Locale.getDefault())
+                .format(Date(msg.timestamp))
+        else
+            SimpleDateFormat("HH:mm", Locale.getDefault())
+                .format(Date(msg.timestamp))
+
+        val tsView = TextView(this).apply {
+            text = stamp
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextColor(Color.LTGRAY)
+            setPadding(8, 4, 8, 0)
+            gravity = if (showFull) Gravity.CENTER else (if (isYou) Gravity.END else Gravity.START)
+        }
+        container.addView(tsView)
+        if (showFull) lastTimestamp = msg.timestamp
+
+        binding.scrollContent.addView(container)
+        binding.scrollView.post { binding.scrollView.fullScroll(View.FOCUS_DOWN) }
     }
 
     // ----- Lifecycle -----

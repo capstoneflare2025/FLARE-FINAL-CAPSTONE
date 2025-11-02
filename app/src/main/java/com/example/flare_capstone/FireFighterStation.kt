@@ -10,5 +10,6 @@ data class FireFighterStation(
     var isRead: Boolean = true,       // unread rows set this to false
     val hasAudio: Boolean = false,    // true if the latest payload had audioBase64
     val hasImage: Boolean = false,// true if the latest payload had imageBase64
-    val hasUnreadAdminReply: Boolean = false  // NEW flag
+    val hasUnreadAdminReply: Boolean = false,
+    val adminMessagesPath: String  // NEW flag
 )
