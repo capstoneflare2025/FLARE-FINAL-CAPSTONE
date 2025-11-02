@@ -177,7 +177,9 @@ class HomeFireFighterFragment : Fragment(), OnMapReadyCallback {
 
         // Base path for all 4 report types under new structure:
         // <StationRoot>/FireFighter/FireFighterAccount/<AccountKey>/AllReport
-        reportsBase = "${stationRoot}/FireFighter/FireFighterAccount/${stationAccountKey}/AllReport"
+        // AllReport sits directly under FireFighterAccount (no account key)
+        reportsBase = "${stationRoot}/FireFighter/FireFighterAccount/AllReport"
+
 
         binding.completed.setOnClickListener { markCompleted() }
 
@@ -607,7 +609,7 @@ class HomeFireFighterFragment : Fragment(), OnMapReadyCallback {
         var anyFound = false
 
         allStations.forEach { (root, acct) ->
-            val path = "$root/FireFighter/FireFighterAccount/$acct/AllReport/$typeNode/${inc.id}"
+            val path = "$root/FireFighter/FireFighterAccount/AllReport/$typeNode/${inc.id}"
             db.child(path).addListenerForSingleValueEvent(object : ValueEventListener {
                 override fun onDataChange(snap: DataSnapshot) {
                     if (snap.exists()) {

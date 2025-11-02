@@ -28,9 +28,9 @@ class Onboard1Activity : AppCompatActivity() {
         val currentUser = auth.currentUser
         if (currentUser != null) {
             val email = currentUser.email
-            if (email == "tcwestfiresubstation@gmail.com" ||
-                email == "lafilipinafire@gmail.com" ||
-                email == "bfp_tagumcity@yahoo.com") {
+            if (email == "tccfsff123@gmail.com" ||
+                email == "lffssff123@gmail.com" ||
+                email == "tcwfssff123@gmail.com") {
 
                 Toast.makeText(this, "Welcome back, Firefighter", Toast.LENGTH_SHORT).show()
                 startActivity(Intent(this, DashboardFireFighterActivity::class.java))
