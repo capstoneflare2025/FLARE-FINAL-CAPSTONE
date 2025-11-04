@@ -1,10 +1,20 @@
 package com.example.flare_capstone
 
+import com.google.firebase.database.PropertyName
+
 data class ChatMessage(
-    val sender: String = "",
-    val text: String? = null,        // present only for text messages
-    val imageUrl: String? = null,    // present only for image messages
-    val audioUrl: String? = null,    // present only for audio messages
-    val durationMs: Long? = null,    // only with audioUrl
-    val timestamp: Long = 0L
+    var type: String? = null,
+    var text: String? = null,
+    var imageBase64: String? = null,
+    var audioBase64: String? = null,
+    var uid: String? = null,
+    var incidentId: String? = null,
+    var reporterName: String? = null,
+    var date: String? = null,
+    var time: String? = null,
+    var timestamp: Long? = null,
+
+    @get:PropertyName("isRead")
+    @set:PropertyName("isRead")
+    var isRead: Boolean? = false
 )
