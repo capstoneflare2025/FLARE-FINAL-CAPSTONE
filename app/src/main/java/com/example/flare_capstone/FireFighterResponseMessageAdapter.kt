@@ -62,27 +62,10 @@ class FireFighterResponseMessageAdapter(
             SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date(station.timestamp))
         } else ""
 
-        // Profile image: URL or Base64
-        val p = station.profileUrl
-        when {
-            p.startsWith("http", true) -> {
-                Glide.with(holder.itemView.context)
-                    .load(p)
-                    .placeholder(R.drawable.station_logo)
-                    .into(holder.profileIcon)
-            }
-            p.isNotBlank() -> {
-                try {
-                    val bytes = Base64.decode(p, Base64.DEFAULT)
-                    val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                    if (bmp != null) holder.profileIcon.setImageBitmap(bmp)
-                    else holder.profileIcon.setImageResource(R.drawable.station_logo)
-                } catch (_: Exception) {
-                    holder.profileIcon.setImageResource(R.drawable.station_logo)
-                }
-            }
-            else -> holder.profileIcon.setImageResource(R.drawable.station_logo)
-        }
+
+        // Profile image: Always use the default image
+        holder.profileIcon.setImageResource(R.drawable.station_logo)  // Set default profile image
+
 
         // Unread style (admin replies only)
         val isUnreadFromAdmin = station.hasUnreadAdminReply

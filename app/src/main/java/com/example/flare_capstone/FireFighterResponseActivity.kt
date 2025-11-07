@@ -149,7 +149,6 @@ class FireFighterResponseActivity : AppCompatActivity() {
         // Read extras from adapter
         val adminPath = intent.getStringExtra("ADMIN_MESSAGES_PATH")
         val stationName = intent.getStringExtra("STATION_NAME") ?: "Fire Station"
-        val senderNameExtra = intent.getStringExtra("SENDER_NAME") // optional
 
         if (adminPath.isNullOrBlank()) {
             Toast.makeText(this, "Missing chat path.", Toast.LENGTH_SHORT).show()
@@ -157,9 +156,7 @@ class FireFighterResponseActivity : AppCompatActivity() {
         }
 
         binding.fireStationName.text = stationName
-        accountName = senderNameExtra
-            ?: FirebaseAuth.getInstance().currentUser?.displayName
-                    ?: "You"
+        accountName = "BFP"  // Default sender is set to "BFP"
 
         // Build the ref for ALL operations
         adminMessagesRef = FirebaseDatabase.getInstance().getReference(adminPath)

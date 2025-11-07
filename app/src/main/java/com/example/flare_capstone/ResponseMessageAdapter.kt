@@ -167,9 +167,15 @@ class ResponseMessageAdapter(
 
             path.get().addOnSuccessListener { snap ->
                 val updates = mutableMapOf<String, Any?>()
-                snap.children.forEach { msg -> updates["${msg.key}/isRead"] = true }
+                snap.children.forEach { msg ->
+                    val type = msg.child("type").getValue(String::class.java)
+                    if (type == "station") {
+                        updates["${msg.key}/isRead"] = true
+                    }
+                }
                 if (updates.isNotEmpty()) path.updateChildren(updates)
             }
+
 
             // Update UI immediately
             val idx = holder.bindingAdapterPosition

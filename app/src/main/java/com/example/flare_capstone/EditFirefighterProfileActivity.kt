@@ -11,6 +11,8 @@ import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
+import android.text.Editable
+import android.text.TextWatcher
 import android.util.Base64
 import android.view.View
 import android.widget.TextView
@@ -26,9 +28,7 @@ import java.io.ByteArrayOutputStream
 class EditFirefighterProfileActivity : AppCompatActivity() {
 
     companion object {
-        // e.g. "TagumCityCentralFireStation/FireFighter/AllFireFighterAccount/MabiniFireFighterAccount"
         const val EXTRA_DB_PATH = "extra_db_path"
-
         private const val CAMERA_REQUEST_CODE = 201
         private const val CAMERA_PERMISSION_REQUEST_CODE = 202
         private const val GALLERY_PERMISSION_REQUEST_CODE = 203
@@ -44,6 +44,11 @@ class EditFirefighterProfileActivity : AppCompatActivity() {
     private var removeProfileImageRequested = false
 
     private var loadingDialog: AlertDialog? = null
+    private var isEditing = false  // Flag to track the edit/save toggle
+
+    // To store the initial values for comparison
+    private var originalName: String = ""
+    private var originalContact: String = ""
 
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) { runOnUiThread { hideLoadingDialog() } }
@@ -51,7 +56,6 @@ class EditFirefighterProfileActivity : AppCompatActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        ThemeManager.applyTheme(this)
         super.onCreate(savedInstanceState)
         binding = ActivityEditProfileBinding.inflate(layoutInflater)
         setContentView(binding.root)
@@ -101,6 +105,9 @@ class EditFirefighterProfileActivity : AppCompatActivity() {
                 binding.email.setText(email)
                 binding.contact.setText(contact)
 
+                originalName = name  // Store the initial name
+                originalContact = contact  // Store the initial contact
+
                 val bmp = convertBase64ToBitmap(profileBase64)
                 if (bmp != null) {
                     binding.profileIcon.setImageBitmap(bmp)
@@ -111,57 +118,28 @@ class EditFirefighterProfileActivity : AppCompatActivity() {
                     base64ProfileImage = null
                 }
 
-                binding.saveButton.setOnClickListener {
-                    val newName = binding.name.text.toString().trim()
-                    var newContact = binding.contact.text.toString().trim()
-
-                    if (newName.isEmpty()) {
-                        binding.name.error = "Required"; return@setOnClickListener
-                    }
-
-                    // Normalize 639xxxxxx… → 09xxxxxx…
-                    if (newContact.startsWith("639")) {
-                        newContact = newContact.replaceFirst("639", "09")
-                        binding.contact.setText(newContact)
-                    }
-
-                    if (newContact.isNotEmpty() && !newContact.matches(Regex("^09\\d{9}$"))) {
-                        binding.contact.error = "Invalid number. Must start with 09 and have 11 digits."
-                        return@setOnClickListener
-                    }
-
-                    val updates = mutableMapOf<String, Any>(
-                        "name" to newName,
-                        "contact" to newContact
-                    )
-                    if (base64ProfileImage != null && !removeProfileImageRequested) {
-                        updates["profile"] = base64ProfileImage!!
-                    }
-
-                    showLoadingDialog("Saving…")
-                    dbRef.updateChildren(updates)
-                        .addOnSuccessListener {
-                            if (removeProfileImageRequested) {
-                                dbRef.child("profile").removeValue()
-                                    .addOnCompleteListener {
-                                        hideLoadingDialog()
-                                        Toast.makeText(this, "Profile updated", Toast.LENGTH_SHORT).show()
-                                        hasProfileImage = false
-                                        removeProfileImageRequested = false
-                                        base64ProfileImage = null
-                                    }
-                            } else {
-                                hideLoadingDialog()
-                                Toast.makeText(this, "Profile updated", Toast.LENGTH_SHORT).show()
-                                hasProfileImage = base64ProfileImage != null
-                                removeProfileImageRequested = false
-                            }
-                        }
-                        .addOnFailureListener { e ->
-                            hideLoadingDialog()
-                            Toast.makeText(this, "Update failed: ${e.message}", Toast.LENGTH_SHORT).show()
-                        }
+                // Toggle Edit/Save button click
+                binding.editButton.setOnClickListener {
+                    isEditing = !isEditing
+                    toggleEditMode()
                 }
+
+                // Add TextWatcher for real-time change detection
+                binding.name.addTextChangedListener(object : TextWatcher {
+                    override fun beforeTextChanged(charSequence: CharSequence?, start: Int, count: Int, after: Int) {}
+                    override fun onTextChanged(charSequence: CharSequence?, start: Int, before: Int, count: Int) {
+                        checkForChanges()  // Detect changes in the name field
+                    }
+                    override fun afterTextChanged(editable: Editable?) {}
+                })
+
+                binding.contact.addTextChangedListener(object : TextWatcher {
+                    override fun beforeTextChanged(charSequence: CharSequence?, start: Int, count: Int, after: Int) {}
+                    override fun onTextChanged(charSequence: CharSequence?, start: Int, before: Int, count: Int) {
+                        checkForChanges()  // Detect changes in the contact field
+                    }
+                    override fun afterTextChanged(editable: Editable?) {}
+                })
             }
             .addOnFailureListener {
                 hideLoadingDialog()
@@ -196,7 +174,87 @@ class EditFirefighterProfileActivity : AppCompatActivity() {
 
     private fun hideLoadingDialog() { loadingDialog?.dismiss() }
 
-    /* ---------------- Image picker ---------------- */
+    /* ---------------- Edit Mode Toggle ---------------- */
+    private fun toggleEditMode() {
+        if (isEditing) {
+            // Change button text to "Cancel"
+            binding.editButton.text = "Cancel"
+            // Make fields editable
+            binding.name.isFocusable = true
+            binding.contact.isFocusable = true
+            binding.name.isFocusableInTouchMode = true
+            binding.contact.isFocusableInTouchMode = true
+        } else {
+            // Change button text back to "Edit"
+            binding.editButton.text = "Edit"
+            // Make fields non-editable
+            binding.name.isFocusable = false
+            binding.contact.isFocusable = false
+            binding.name.isFocusableInTouchMode = false
+            binding.contact.isFocusableInTouchMode = false
+
+            // Save changes if any (if Edit is switched to Save)
+            saveProfileChanges()
+        }
+    }
+
+    /* ---------------- Detect Changes ---------------- */
+    private fun checkForChanges() {
+        val newName = binding.name.text.toString().trim()
+        val newContact = binding.contact.text.toString().trim()
+
+        if (newName != originalName || newContact != originalContact) {
+            binding.editButton.text = "Save"  // Change to Save if any change
+        } else {
+            binding.editButton.text = "Cancel"  // Revert back to Cancel if no changes
+        }
+    }
+
+    /* ---------------- Save Changes ---------------- */
+    private fun saveProfileChanges() {
+        val newName = binding.name.text.toString().trim()
+        var newContact = binding.contact.text.toString().trim()
+
+        if (newName.isEmpty()) {
+            binding.name.error = "Required"; return
+        }
+
+        // Normalize 639xxxxxx → 09xxxxxx
+        if (newContact.startsWith("639")) {
+            newContact = newContact.replaceFirst("639", "09")
+            binding.contact.setText(newContact)
+        }
+
+        if (newContact.isNotEmpty() && !newContact.matches(Regex("^09\\d{9}$"))) {
+            binding.contact.error = "Invalid number. Must start with 09 and have 11 digits."
+            return
+        }
+
+        val updates = mutableMapOf<String, Any>(
+            "name" to newName,
+            "contact" to newContact
+        )
+        if (base64ProfileImage != null && !removeProfileImageRequested) {
+            updates["profile"] = base64ProfileImage!!
+        }
+
+        showLoadingDialog("Saving…")
+        dbRef.updateChildren(updates)
+            .addOnSuccessListener {
+                hideLoadingDialog()
+                Toast.makeText(this, "Profile updated", Toast.LENGTH_SHORT).show()
+                originalName = newName  // Update the original name
+                originalContact = newContact  // Update the original contact
+                hasProfileImage = base64ProfileImage != null
+                removeProfileImageRequested = false
+            }
+            .addOnFailureListener { e ->
+                hideLoadingDialog()
+                Toast.makeText(this, "Update failed: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+    }
+
+    /* ---------------- Image Picker ---------------- */
     private fun showImageSourceSheet() {
         val options = if (hasProfileImage)
             arrayOf("Take photo", "Choose from gallery", "Remove photo")
@@ -219,6 +277,7 @@ class EditFirefighterProfileActivity : AppCompatActivity() {
             }.show()
     }
 
+    /* ---------------- Permissions / Launchers ---------------- */
     private fun ensureCameraAndOpen() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), CAMERA_PERMISSION_REQUEST_CODE)
@@ -247,7 +306,7 @@ class EditFirefighterProfileActivity : AppCompatActivity() {
         startActivityForResult(intent, GALLERY_REQUEST_CODE)
     }
 
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (grantResults.isEmpty() || grantResults[0] != PackageManager.PERMISSION_GRANTED) return
         when (requestCode) {
@@ -282,19 +341,25 @@ class EditFirefighterProfileActivity : AppCompatActivity() {
         }
     }
 
-    /* ---------------- Base64 helpers ---------------- */
+    /* ---------------- Bitmap <-> Base64 ---------------- */
     private fun convertBitmapToBase64(bitmap: Bitmap): String {
-        val out = ByteArrayOutputStream()
-        bitmap.compress(Bitmap.CompressFormat.JPEG, 80, out)
-        val bytes = out.toByteArray()
-        return Base64.encodeToString(bytes, Base64.DEFAULT)
+        val outputStream = ByteArrayOutputStream()
+        bitmap.compress(Bitmap.CompressFormat.JPEG, 80, outputStream)
+        val byteArray = outputStream.toByteArray()
+        return Base64.encodeToString(byteArray, Base64.DEFAULT)
     }
 
     private fun convertBase64ToBitmap(base64String: String?): Bitmap? {
         if (base64String.isNullOrEmpty()) return null
         return try {
-            val decoded = Base64.decode(base64String, Base64.DEFAULT)
-            BitmapFactory.decodeByteArray(decoded, 0, decoded.size)
-        } catch (_: Exception) { null }
+            val decodedBytes = Base64.decode(base64String, Base64.DEFAULT)
+            BitmapFactory.decodeByteArray(decodedBytes, 0, decodedBytes.size)
+        } catch (_: Exception) {
+            null
+        }
     }
 }
+
+
+
+

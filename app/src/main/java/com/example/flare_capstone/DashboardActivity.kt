@@ -17,6 +17,7 @@ import android.os.Bundle
 import android.util.Log
 import android.view.View
 import android.widget.TextView
+import android.widget.Toast
 import androidx.annotation.RequiresPermission
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -42,18 +43,19 @@ class DashboardActivity : AppCompatActivity() {
     private var user: User? = null
     private var unreadMessageCount: Int = 0
 
+    // DELETE this:
+// private val stationNodes = listOf("CanocotanFireStation","LaFilipinaFireStation","MabiniFireStation")
+
+    // ADD this:
+    private val stationNodes = mutableListOf<String>()
+
+
     private val LOCATION_PERMISSION_REQUEST_CODE = 1001
     private lateinit var fusedLocationClient: FusedLocationProviderClient
 
     private val responseListeners = mutableListOf<Pair<Query, ChildEventListener>>()
     private val unreadCounterListeners = mutableListOf<Pair<Query, ValueEventListener>>()
 
-    // ✅ Multiple station nodes under CapstoneFlare
-    private val stationNodes = listOf(
-        "CanocotanFireStation",
-        "LaFilipinaFireStation",
-        "MabiniFireStation"
-    )
 
     private var isNetworkValidated = false
     private var isNetworkSlow = true
@@ -90,6 +92,8 @@ class DashboardActivity : AppCompatActivity() {
         }
     }
 
+
+
     /* =========================================================
      * Lifecycle
      * ========================================================= */
@@ -122,23 +126,56 @@ class DashboardActivity : AppCompatActivity() {
 
         createNotificationChannel()
 
-        fetchCurrentUserName { name ->
-            currentUserName = name
-            if (name != null) {
-                startRealtimeUnreadCounter()
-                listenForResponseMessages()
-                listenForStatusChanges()
-            } else {
-                Log.e("UserCheck", "Failed to get current user name.")
+// 1) Load stations under CapstoneFlare
+        loadStations { stationsOk ->
+            if (!stationsOk) {
+                Log.w("Stations", "No stations discovered (yet). Listeners postponed.")
             }
-            isInitialFirebaseReady = true
-            runOnUiThread { maybeHideLoading() }
+
+            // 2) Resolve user, then attach listeners
+            fetchCurrentUserName { name ->
+                currentUserName = name
+                if (name != null) {
+                    startRealtimeUnreadCounter()
+                    listenForResponseMessages()
+                    listenForStatusChanges()
+                } else {
+                    Log.e("UserCheck", "Failed to get current user name.")
+                }
+                isInitialFirebaseReady = true
+                runOnUiThread { maybeHideLoading() }
+            }
         }
+
 
         binding.root.postDelayed({
             if (!isInitialFirebaseReady) showLoadingDialog("Still loading data… (slow internet)")
         }, 10_000)
     }
+
+    override fun onResume() {
+        super.onResume()
+
+        // Update the unread message count when the activity is resumed
+        updateUnreadMessageCount()
+
+        if (!isInitialFirebaseReady) {
+            loadStations { stationsOk ->
+                if (stationsOk) {
+                    fetchCurrentUserName { name ->
+                        currentUserName = name
+                        if (name != null) {
+                            startRealtimeUnreadCounter()
+                            listenForResponseMessages()
+                            listenForStatusChanges()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
 
     override fun onDestroy() {
         super.onDestroy()
@@ -186,20 +223,45 @@ class DashboardActivity : AppCompatActivity() {
      * ========================================================= */
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+
         val nm = getSystemService(NotificationManager::class.java)
         val attrs = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_NOTIFICATION)
             .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
             .build()
+
         val soundUri = Uri.parse("android.resource://$packageName/${R.raw.message_notif}")
         val ch = NotificationChannel(CH_GENERAL, "General Notifications", NotificationManager.IMPORTANCE_HIGH).apply {
             setSound(soundUri, attrs)
             enableVibration(true)
             description = "Custom notification channel for Flare"
         }
+
         nm.createNotificationChannel(ch)
+
+        // Log the creation of the notification channel
+        Log.d("NotificationChannel", "Notification channel created with ID: $CH_GENERAL")
     }
 
+
+    private fun loadStations(done: (Boolean) -> Unit) {
+        // Reads CapstoneFlare/* and collects the first-level keys as station nodes
+        database.addListenerForSingleValueEvent(object : ValueEventListener {
+            override fun onDataChange(snap: DataSnapshot) {
+                stationNodes.clear()
+                for (child in snap.children) {
+                    val key = child.key ?: continue
+                    stationNodes += key
+                }
+                Log.d("Stations", "Discovered stations: $stationNodes")
+                done(stationNodes.isNotEmpty())
+            }
+            override fun onCancelled(error: DatabaseError) {
+                Log.w("Stations", "Discovery cancelled: ${error.message}")
+                done(false)
+            }
+        })
+    }
     @RequiresPermission(Manifest.permission.POST_NOTIFICATIONS)
     private fun triggerNotification(
         fireStationName: String?,
@@ -211,6 +273,14 @@ class DashboardActivity : AppCompatActivity() {
         stationNodeParam: String
     ) {
         val notificationId = (stationNodeParam + "::" + messageId).hashCode()
+
+        // Show a toast to confirm the function is being called
+        Toast.makeText(
+            applicationContext,
+            "Triggering notification: Title: $title, Message: $message",
+            Toast.LENGTH_SHORT
+        ).show()
+
         val reportNode = "AllReport/FireReport"
 
         val resultIntent = Intent(this, FireReportResponseActivity::class.java).apply {
@@ -237,6 +307,14 @@ class DashboardActivity : AppCompatActivity() {
             .setAutoCancel(true)
             .build()
 
+        // Show toast before posting the notification
+        Toast.makeText(
+            applicationContext,
+            "Posting notification with ID: $notificationId",
+            Toast.LENGTH_SHORT
+        ).show()
+
+        // Posting the notification
         NotificationManagerCompat.from(this).notify(notificationId, notification)
     }
 
@@ -262,7 +340,6 @@ class DashboardActivity : AppCompatActivity() {
                 override fun onCancelled(error: DatabaseError) = callback(null)
             })
     }
-
     private fun listenForResponseMessages() {
         val prefs = getSharedPreferences("user_preferences", MODE_PRIVATE)
         if (!prefs.getBoolean("notifications_enabled", true)) return
@@ -271,6 +348,7 @@ class DashboardActivity : AppCompatActivity() {
         val myContact = user?.contact?.trim().orEmpty()
         if (myName.isEmpty() && myContact.isEmpty()) return
 
+        // Define all report types
         val reportTypes = listOf(
             "FireReport",
             "OtherEmergencyReport",
@@ -278,42 +356,66 @@ class DashboardActivity : AppCompatActivity() {
             "SmsReport"
         )
 
+        // Iterate over all the fire stations
         for (station in stationNodes) {
             for (reportType in reportTypes) {
-                // Listen directly under messages
+                // Get reference to the specific report type under AllReport for each station
                 val messagesRef = database.child(station)
                     .child("AllReport")
                     .child(reportType)
+                    .child("messages")
 
                 val listener = object : ChildEventListener {
                     @RequiresPermission(Manifest.permission.POST_NOTIFICATIONS)
                     override fun onChildAdded(snapshot: DataSnapshot, prev: String?) {
+                        Toast.makeText(
+                            applicationContext,
+                            "New message added in $station/$reportType",
+                            Toast.LENGTH_SHORT
+                        ).show()
+
+                        // Get the incident ID and messages from the report
                         val incidentId = snapshot.key ?: return
                         val messages = snapshot.child("messages")
 
+                        // If no messages exist, show a toast
+                        if (!messages.exists()) {
+                            Toast.makeText(applicationContext, "No messages found for $station/$reportType/$incidentId", Toast.LENGTH_SHORT).show()
+                        }
+
+                        // Iterate through each message in the messages node
                         for (msg in messages.children) {
                             val type = msg.child("type").getValue(String::class.java)?.lowercase() ?: ""
                             val isRead = msg.child("isRead").getValue(Boolean::class.java) ?: false
 
-                            // ✅ Only consider unread station messages
-                            if (type != "station" || isRead) continue
+                            // Skip if the type is not 'station' or the message is marked as read
+                            if (type != "station" || isRead) {
+                                continue
+                            }
 
+                            // Extract message data
                             val contact = msg.child("contact").getValue(String::class.java)
                             val reporterName = msg.child("reporterName").getValue(String::class.java)
                             val text = msg.child("text").getValue(String::class.java)
                             val fireStationName = msg.child("fireStationName").getValue(String::class.java)
                             val messageId = msg.key ?: System.currentTimeMillis().toString()
 
+                            // Generate a unique key for the notification
                             val uniqueKey = "$station::$incidentId::$messageId"
-                            if (isNotificationShown(uniqueKey)) continue
+                            if (isNotificationShown(uniqueKey)) {
+                                continue
+                            }
 
+                            // Check if the contact or reporter name matches the current user
                             if (contact == myContact || reporterName == myName) {
+                                // Increment unread message count
                                 unreadMessageCount++
                                 sharedPreferences.edit()
                                     .putInt("unread_message_count", unreadMessageCount)
                                     .apply()
                                 runOnUiThread { updateInboxBadge(unreadMessageCount) }
 
+                                // Trigger the notification
                                 triggerNotification(
                                     fireStationName = fireStationName ?: station,
                                     message = text,
@@ -323,10 +425,14 @@ class DashboardActivity : AppCompatActivity() {
                                     title = "New message from ${fireStationName ?: station}",
                                     stationNodeParam = station
                                 )
+
+                                // Mark the notification as shown
                                 markNotificationAsShown(uniqueKey)
+                            } else {
+                                // Show a toast if contact or reporter name doesn't match
+                                Toast.makeText(applicationContext, "Skipping message due to no match for contact or reporterName", Toast.LENGTH_SHORT).show()
                             }
                         }
-
                     }
 
                     override fun onChildChanged(snapshot: DataSnapshot, prev: String?) {}
@@ -335,6 +441,7 @@ class DashboardActivity : AppCompatActivity() {
                     override fun onCancelled(error: DatabaseError) {}
                 }
 
+                // Add the listener for the messages node
                 messagesRef.addChildEventListener(listener)
                 responseListeners += messagesRef to listener
             }

@@ -30,9 +30,9 @@ class FireFighterReportActivity : AppCompatActivity() {
 
     // Email → station key
     private val emailToStation = mapOf(
-        "tcwestfiresubstation@gmail.com" to "MabiniFireFighterAccount",
-        "lafilipinafire@gmail.com"       to "LaFilipinaFireFighterAccount",
-        "bfp_tagumcity@yahoo.com"        to "CanocotanFireFighterAccount"
+        "tccfsff123@gmail.com" to "CanocotanFireStation",
+        "lffssff123@gmail.com"  to "LaFilipinaFireStation",
+        "tcwfssff123@gmail.com"  to "MabiniFireStation"
     )
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -87,7 +87,7 @@ class FireFighterReportActivity : AppCompatActivity() {
 
     private fun resolveStationKey(): String {
         val email = FirebaseAuth.getInstance().currentUser?.email?.lowercase().orEmpty()
-        return emailToStation[email] ?: "CanocotanFireFighterAccount" // safe fallback
+        return emailToStation[email] ?: "CanocotanFireStation" // safe fallback
     }
 
     /** Attach live listeners for each collection under the station */
@@ -98,8 +98,8 @@ class FireFighterReportActivity : AppCompatActivity() {
         adapter.submitList(emptyList())
         binding.swipe.isRefreshing = true
 
-        // Base: TagumCityCentralFireStation/FireFighter/AllFireFighterAccount/{station}/AllReport
-        val base = "TagumCityCentralFireStation/FireFighter/AllFireFighterAccount/$stationKey/AllReport"
+        // Base: CapstoneFlare/{FireStation}/FireFighter/FireFighterAccount/AllReport
+        val base = "CapstoneFlare/$stationKey/FireFighter/FireFighterAccount/AllReport"
 
         fun hook(path: String, kind: ReportKind) {
             val ref = db.child(path)

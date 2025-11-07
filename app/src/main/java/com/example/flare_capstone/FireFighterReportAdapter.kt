@@ -34,19 +34,31 @@ class ReportVH(v: View) : RecyclerView.ViewHolder(v) {
     private val sub   = v.findViewById<TextView>(R.id.txtSub)
     private val chipT = v.findViewById<TextView>(R.id.chipType)
     private val chipS = v.findViewById<TextView>(R.id.chipStatus)
+    private val locationView = v.findViewById<TextView>(R.id.txtLocation) // Optional for live location
 
     fun bind(r: Report, onClick: (Report) -> Unit) {
-        title.text = r.location.ifBlank { "No location" }
-        sub.text   = listOfNotNull(r.date.takeIf { !it.isNullOrBlank() }, r.time.takeIf { !it.isNullOrBlank() })
-            .joinToString(" ")
+        // Handle title (location or fallback)
+        title.text = r.location.ifBlank { "No location available" }
+
+        // Display date and time, with fallback to "Unknown" if not available
+        sub.text = listOfNotNull(
+            r.date.takeIf { it!!.isNotBlank() },
+            r.time.takeIf { it!!.isNotBlank() }
+        ).joinToString(" | ").takeIf { it.isNotBlank() } ?: "Unknown time"
+
+        // Handle the report type (Fire, Other, EMS, SMS)
         chipT.text = when (r.kind) {
             ReportKind.FIRE  -> "Fire"
-            ReportKind.OTHER -> "Other"
+            ReportKind.OTHER -> "Other Emergency"
             ReportKind.EMS   -> "EMS"
             ReportKind.SMS   -> "SMS"
-            ReportKind.ALL   -> "All"
+            ReportKind.ALL   -> "All Types"
         }
-        chipS.text = r.status
+
+        // Handle the status of the report (e.g., Pending, Ongoing, Resolved)
+        chipS.text = r.status.takeIf { it.isNotBlank() } ?: "Status Unknown"
+
+        // Set the item click listener to open the report details
         itemView.setOnClickListener { onClick(r) }
     }
 }

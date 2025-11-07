@@ -344,10 +344,11 @@ class FireReportResponseActivity : AppCompatActivity() {
             val isReply = item.msg.type == "reply"
             displayMessage(item.msg, isReply)
 
-            // ✅ Only mark as read for messages NOT sent by current user
-            if (item.msg.uid != uid && !(item.msg.isRead ?: false)) {
+            if (item.msg.type?.equals("station", ignoreCase = true) == true &&
+                (item.msg.isRead != true)) {
                 markAsRead(item.key)
             }
+
         }
         binding.scrollView.post { binding.scrollView.fullScroll(View.FOCUS_DOWN) }
     }

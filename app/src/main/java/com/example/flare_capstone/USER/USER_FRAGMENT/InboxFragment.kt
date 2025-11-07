@@ -59,9 +59,32 @@ class InboxFragment : Fragment() {
         return binding.root
     }
 
+    override fun onResume() {
+        super.onResume()
+        // Make sure category and station dropdowns are initialized after resume
+        setupCategoryDropdown()
+        setupStationDropdown()
+    }
+
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putSerializable("currentCategoryFilter", currentCategoryFilter)
+        outState.putString("selectedStation", selectedStation)
+    }
+
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         database = FirebaseDatabase.getInstance().reference.child(rootNode)
+
+        savedInstanceState?.let {
+            currentCategoryFilter = it.getSerializable("currentCategoryFilter") as CategoryFilter
+            selectedStation = it.getString("selectedStation", "All Fire Stations")
+        }
+
+        // Setup dropdowns and filters
+        setupCategoryDropdown()
+        setupStationDropdown()
 
         responseMessageAdapter = ResponseMessageAdapter(visibleMessages) {
             applyFilter()
@@ -115,6 +138,20 @@ class InboxFragment : Fragment() {
             setupStationDropdown()
             loadUserAndAttach()
         }
+    }
+
+    private fun setupCategoryDropdown() {
+        val categories = listOf(
+            "All Report",
+            "Fire Report",
+            "Other Emergency Report",
+            "Emergency Medical Services Report",
+            "Sms Report"
+        )
+        binding.categoryDropdown.setAdapter(
+            ArrayAdapter(requireContext(), R.layout.simple_list_item_1, categories)
+        )
+        binding.categoryDropdown.setText("All Report", false)
     }
 
     // ✅ Fetch display names for all stations from /Profile/name
@@ -189,7 +226,6 @@ class InboxFragment : Fragment() {
         visibleMessages.clear()
         responseMessageAdapter.notifyDataSetChanged()
         b.noMessagesText.visibility = View.VISIBLE
-        updateInboxBadge(0)
 
         val reportTypes = listOf(
             "FireReport" to "fire",
@@ -246,8 +282,6 @@ class InboxFragment : Fragment() {
                         if (changed) applyFilter()
                         vb.noMessagesText.visibility =
                             if (visibleMessages.isEmpty()) View.VISIBLE else View.GONE
-                        unreadMessageCount = allMessages.count { !it.isRead && it.type?.lowercase() == "station" }
-                        updateInboxBadge(unreadMessageCount)
                     }
 
                     override fun onCancelled(error: DatabaseError) {
@@ -260,6 +294,8 @@ class InboxFragment : Fragment() {
             }
         }
     }
+
+
 
     private fun applyFilter() {
         if (_binding == null) return

@@ -124,14 +124,17 @@ class InboxFireFighterFragment : Fragment() {
         }
     }
 
-    // ---------- Direct fields at FireFighterAccount ----------
     private fun addOrUpdateAccountRowDirect(stationRoot: String, node: DataSnapshot) {
-        val name = node.child("name").getValue(String::class.java) ?: "Unknown"
-        val profileBase64 = node.child("profile").getValue(String::class.java) ?: ""
+
+        var name = node.child("name").getValue(String::class.java) ?: "Unknown"
         val adminMessagesPath = node.ref.child("AdminMessages").path.toString()
         val rowId = adminMessagesPath // stable + unique
 
-        val displayName = stationDisplayName(stationRoot, name)
+        // Trim the name if it contains extra words after "Station" or "Sub-Station"
+        name = trimStationName(name)
+
+        // Use the 'name' from Profile or fallback value
+        val displayName = name  // Display name comes from Profile node or fallback name
 
         val existing = stationMap[rowId]
         stationMap[rowId] = (existing ?: FireFighterStation(
@@ -139,14 +142,34 @@ class InboxFireFighterFragment : Fragment() {
             name = displayName,
             lastMessage = "",
             timestamp = 0L,
-            profileUrl = profileBase64,
             lastSender = "",
             isRead = true,
             hasAudio = false,
             hasImage = false,
             adminMessagesPath = adminMessagesPath
-        )).copy(name = displayName, profileUrl = profileBase64)
+        )).copy(name = displayName)
     }
+
+    /**
+     * Trims the name to exclude any extra words after "Station" or "Sub-Station".
+     */
+    private fun trimStationName(name: String): String {
+        // Check if the name contains "Sub-Station" or "Station"
+        val nameParts = name.trim().split(" ")
+
+        // Find the index of the last word "Station" or "Sub-Station"
+        val stationIndex = nameParts.indexOfFirst { it.equals("Station", ignoreCase = true) || it.equals("Sub-Station", ignoreCase = true) }
+
+        // If "Station" or "Sub-Station" is found and there are extra words after it, we trim the name
+        return if (stationIndex != -1) {
+            // Return only the part up to "Station" or "Sub-Station"
+            nameParts.take(stationIndex + 1).joinToString(" ")
+        } else {
+            // Return the name as is if it doesn't contain "Station"
+            name
+        }
+    }
+
 
     private fun attachLastMessageListenerDirect(stationRoot: String, node: DataSnapshot) {
         val adminMessagesPath = node.ref.child("AdminMessages").path.toString()

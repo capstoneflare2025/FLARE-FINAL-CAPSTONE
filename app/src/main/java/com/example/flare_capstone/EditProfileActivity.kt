@@ -11,6 +11,8 @@ import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
+import android.text.Editable
+import android.text.TextWatcher
 import android.util.Base64
 import android.view.View
 import android.widget.TextView
@@ -20,7 +22,6 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.example.flare_capstone.databinding.ActivityEditProfileBinding
-import com.google.firebase.auth.EmailAuthProvider
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.DatabaseReference
 import com.google.firebase.database.FirebaseDatabase
@@ -32,6 +33,7 @@ class EditProfileActivity : AppCompatActivity() {
     private lateinit var binding: ActivityEditProfileBinding
     private lateinit var database: DatabaseReference
     private lateinit var auth: FirebaseAuth
+    private var isEditing = false
 
     /* ---------------- Request Codes ---------------- */
     companion object {
@@ -46,6 +48,10 @@ class EditProfileActivity : AppCompatActivity() {
     private var hasProfileImage: Boolean = false
     private var removeProfileImageRequested: Boolean = false
 
+    // To store the initial values for comparison
+    private var originalName: String = ""
+    private var originalContact: String = ""
+
     /* ---------------- Connectivity ---------------- */
     private lateinit var connectivityManager: ConnectivityManager
     private var loadingDialog: AlertDialog? = null
@@ -59,7 +65,6 @@ class EditProfileActivity : AppCompatActivity() {
      * Lifecycle
      * ========================================================= */
     override fun onCreate(savedInstanceState: Bundle?) {
-        ThemeManager.applyTheme(this)
         super.onCreate(savedInstanceState)
         binding = ActivityEditProfileBinding.inflate(layoutInflater)
         setContentView(binding.root)
@@ -79,11 +84,6 @@ class EditProfileActivity : AppCompatActivity() {
         binding.profileIcon.setOnClickListener { showImageSourceSheet() }
 
         binding.changePhotoIcon.setOnClickListener { showImageSourceSheet() }
-
-        // Email is readonly
-        binding.email.isFocusable = false
-        binding.email.isFocusableInTouchMode = false
-        binding.email.isClickable = false
 
         // Network callback
         connectivityManager.registerDefaultNetworkCallback(networkCallback)
@@ -113,103 +113,43 @@ class EditProfileActivity : AppCompatActivity() {
                     }
 
                     val originalName = user.name ?: ""
-                    val originalEmail = user.email ?: ""
                     val originalContact = user.contact ?: ""
+
+                    // Initially make the fields non-editable
+                    binding.name.isFocusable = false
+                    binding.contact.isFocusable = false
+                    binding.name.isFocusableInTouchMode = false
+                    binding.contact.isFocusableInTouchMode = false
 
                     binding.currentPassword.visibility = View.GONE
                     binding.currentPasswordText.visibility = View.GONE
 
-                    binding.saveButton.setOnClickListener {
-                        val newName = binding.name.text.toString().trim()
-                        var newContact = binding.contact.text.toString().trim()
-
-                        if (newName.isEmpty()) {
-                            binding.name.error = "Required"
-                            return@setOnClickListener
-                        }
-
-                        if (newContact.startsWith("639")) {
-                            newContact = newContact.replaceFirst("639", "09")
-                            binding.contact.setText(newContact)
-                        }
-
-                        val isNameChanged = newName != originalName
-                        val isContactChanged = newContact != originalContact
-                        val isPhotoAddedOrReplaced = !base64ProfileImage.isNullOrEmpty() && !removeProfileImageRequested
-                        val isPhotoRemoved = removeProfileImageRequested && base64ProfileImage.isNullOrEmpty()
-                        val anythingChanged = isNameChanged || isContactChanged || isPhotoAddedOrReplaced || isPhotoRemoved
-
-                        if (!anythingChanged) {
-                            Toast.makeText(this, "Nothing changed", Toast.LENGTH_SHORT).show()
-                            return@setOnClickListener
-                        }
-
-                        if (isContactChanged && !newContact.matches(Regex("^09\\d{9}$"))) {
-                            binding.contact.error = "Invalid number. Must start with 09 and have 11 digits."
-                            return@setOnClickListener
-                        }
-
-                        database.get().addOnSuccessListener { allUsersSnapshot ->
-                            var contactExists = false
-                            for (child in allUsersSnapshot.children) {
-                                if (child.key != userId) {
-                                    val other = child.getValue(User::class.java)
-                                    if (other?.contact == newContact) { contactExists = true; break }
-                                }
-                            }
-                            if (contactExists) {
-                                binding.contact.error = "Contact number already used"
-                                return@addOnSuccessListener
-                            }
-
-                            val currentUser = auth.currentUser
-                            if (isNameChanged || isContactChanged) {
-                                binding.currentPassword.visibility = View.VISIBLE
-                                binding.currentPasswordText.visibility = View.VISIBLE
-                            } else {
-                                binding.currentPassword.visibility = View.GONE
-                                binding.currentPasswordText.visibility = View.GONE
-                            }
-
-                            val currentPassword = binding.currentPassword.text.toString().trim()
-                            if ((isNameChanged || isContactChanged) && currentPassword.isEmpty()) {
-                                binding.currentPassword.error = "Please enter your current password"
-                                return@addOnSuccessListener
-                            }
-
-                            if (currentPassword.isNotEmpty()) {
-                                val emailForAuth = currentUser?.email
-                                if (emailForAuth.isNullOrEmpty()) {
-                                    Toast.makeText(this, "Missing auth email", Toast.LENGTH_SHORT).show()
-                                    return@addOnSuccessListener
-                                }
-                                val credential = EmailAuthProvider.getCredential(emailForAuth, currentPassword)
-                                currentUser.reauthenticate(credential)
-                                    .addOnSuccessListener {
-                                        updateDatabase(
-                                            userId = userId,
-                                            name = newName,
-                                            email = originalEmail,
-                                            contact = newContact,
-                                            profileBase64 = if (isPhotoAddedOrReplaced) base64ProfileImage else null,
-                                            removePhoto = isPhotoRemoved
-                                        )
-                                    }
-                                    .addOnFailureListener { e ->
-                                        Toast.makeText(this, "Re-authentication failed: ${e.message}", Toast.LENGTH_SHORT).show()
-                                    }
-                            } else {
-                                updateDatabase(
-                                    userId = userId,
-                                    name = newName,
-                                    email = originalEmail,
-                                    contact = newContact,
-                                    profileBase64 = if (isPhotoAddedOrReplaced) base64ProfileImage else null,
-                                    removePhoto = isPhotoRemoved
-                                )
-                            }
-                        }
+                    // Handle the "Edit" button click
+                    binding.editButton.setOnClickListener {
+                        isEditing = !isEditing
+                        toggleEditMode()
                     }
+
+                    // Add TextWatcher for real-time change detection
+                    binding.name.addTextChangedListener(object : TextWatcher {
+                        override fun beforeTextChanged(charSequence: CharSequence?, start: Int, count: Int, after: Int) {}
+
+                        override fun onTextChanged(charSequence: CharSequence?, start: Int, before: Int, count: Int) {
+                            checkForChanges(originalName, originalContact)
+                        }
+
+                        override fun afterTextChanged(editable: Editable?) {}
+                    })
+
+                    binding.contact.addTextChangedListener(object : TextWatcher {
+                        override fun beforeTextChanged(charSequence: CharSequence?, start: Int, count: Int, after: Int) {}
+
+                        override fun onTextChanged(charSequence: CharSequence?, start: Int, before: Int, count: Int) {
+                            checkForChanges(originalName, originalContact)
+                        }
+
+                        override fun afterTextChanged(editable: Editable?) {}
+                    })
                 }
             }.addOnFailureListener { hideLoadingDialog() }
         }
@@ -243,48 +183,85 @@ class EditProfileActivity : AppCompatActivity() {
 
     private fun hideLoadingDialog() { loadingDialog?.dismiss() }
 
-    /* =========================================================
-     * Firebase: Update
-     * ========================================================= */
-    private fun updateDatabase(
-        userId: String,
-        name: String,
-        email: String,
-        contact: String,
-        profileBase64: String?,
-        removePhoto: Boolean
-    ) {
-        val updates = mutableMapOf<String, Any>(
-            "name" to name,
-            "email" to email,
-            "contact" to contact
-        )
-        if (profileBase64 != null) updates["profile"] = profileBase64
+    /* ---------------- Edit Mode Toggle ---------------- */
+    private fun toggleEditMode() {
+        if (isEditing) {
+            // Change button text to "Cancel"
+            binding.editButton.text = "Cancel"
+            // Make fields editable
+            binding.name.isFocusable = true
+            binding.contact.isFocusable = true
+            binding.name.isFocusableInTouchMode = true
+            binding.contact.isFocusableInTouchMode = true
+        } else {
+            // Change button text back to "Edit"
+            binding.editButton.text = "Edit"
+            // Make fields non-editable
+            binding.name.isFocusable = false
+            binding.contact.isFocusable = false
+            binding.name.isFocusableInTouchMode = false
+            binding.contact.isFocusableInTouchMode = false
 
-        database.child(userId).updateChildren(updates)
+            // Save changes if any (if Edit is switched to Save)
+            saveProfileChanges()
+        }
+    }
+
+    /* ---------------- Detect Changes ---------------- */
+    private fun checkForChanges(originalName: String, originalContact: String) {
+        val newName = binding.name.text.toString().trim()
+        val newContact = binding.contact.text.toString().trim()
+
+        if (newName != originalName || newContact != originalContact) {
+            binding.editButton.text = "Save"  // Change to Save if any change
+        } else {
+            binding.editButton.text = "Cancel"  // Revert back to Cancel if no changes
+        }
+    }
+
+    /* ---------------- Save Changes ---------------- */
+    private fun saveProfileChanges() {
+        val newName = binding.name.text.toString().trim()
+        var newContact = binding.contact.text.toString().trim()
+
+        // Validate Name
+        if (newName.isEmpty()) {
+            binding.name.error = "Required"; return
+        }
+
+        // Normalize 639xxxxxx → 09xxxxxx
+        if (newContact.startsWith("639")) {
+            newContact = newContact.replaceFirst("639", "09")
+            binding.contact.setText(newContact)
+        }
+
+        if (newContact.isNotEmpty() && !newContact.matches(Regex("^09\\d{9}$"))) {
+            binding.contact.error = "Invalid number. Must start with 09 and have 11 digits."
+            return
+        }
+
+        val updates = mutableMapOf<String, Any>( "name" to newName, "contact" to newContact )
+        if (base64ProfileImage != null && !removeProfileImageRequested) {
+            updates["profile"] = base64ProfileImage!!
+        }
+
+        showLoadingDialog("Saving…")
+        database.child(auth.currentUser?.uid ?: "").updateChildren(updates)
             .addOnSuccessListener {
-                if (removePhoto) {
-                    database.child(userId).child("profile").removeValue()
-                        .addOnCompleteListener {
-                            Toast.makeText(this, "Profile updated successfully", Toast.LENGTH_SHORT).show()
-                            hasProfileImage = false
-                            removeProfileImageRequested = false
-                            base64ProfileImage = null
-                        }
-                } else {
-                    Toast.makeText(this, "Profile updated successfully", Toast.LENGTH_SHORT).show()
-                    hasProfileImage = profileBase64 != null
-                    removeProfileImageRequested = false
-                }
+                hideLoadingDialog()
+                Toast.makeText(this, "Profile updated", Toast.LENGTH_SHORT).show()
+                originalName = newName  // Update the original name
+                originalContact = newContact  // Update the original contact
+                hasProfileImage = base64ProfileImage != null
+                removeProfileImageRequested = false
             }
             .addOnFailureListener { e ->
-                Toast.makeText(this, "Database update failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                hideLoadingDialog()
+                Toast.makeText(this, "Update failed: ${e.message}", Toast.LENGTH_SHORT).show()
             }
     }
 
-    /* =========================================================
-     * Image Picker UI
-     * ========================================================= */
+    /* ---------------- Image Picker ---------------- */
     private fun showImageSourceSheet() {
         val options = if (hasProfileImage)
             arrayOf("Take photo", "Choose from gallery", "Remove photo")
@@ -307,24 +284,18 @@ class EditProfileActivity : AppCompatActivity() {
             }.show()
     }
 
-    /* =========================================================
-     * Permissions / Launchers
-     * ========================================================= */
+    /* ---------------- Permissions / Launchers ---------------- */
     private fun ensureCameraAndOpen() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), CAMERA_PERMISSION_REQUEST_CODE)
-        } else {
-            openCamera()
-        }
+        } else openCamera()
     }
 
     private fun ensureGalleryAndOpen() {
         val perm = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_IMAGES else Manifest.permission.READ_EXTERNAL_STORAGE
         if (ContextCompat.checkSelfPermission(this, perm) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, arrayOf(perm), GALLERY_PERMISSION_REQUEST_CODE)
-        } else {
-            openGallery()
-        }
+        } else openGallery()
     }
 
     private fun openCamera() {
@@ -344,16 +315,14 @@ class EditProfileActivity : AppCompatActivity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (grantResults.isEmpty() || grantResults[0] != PackageManager.PERMISSION_GRANTED) return
+        if (grantResults.isEmpty() || grantResults[0] != PackageManager.PERMISSION_GRANTED
+        ) return
         when (requestCode) {
             CAMERA_PERMISSION_REQUEST_CODE -> openCamera()
             GALLERY_PERMISSION_REQUEST_CODE -> openGallery()
         }
     }
 
-    /* =========================================================
-     * Activity Result (deprecated API retained)
-     * ========================================================= */
     @Deprecated("Using startActivityForResult; migrate to Activity Result APIs when convenient")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
@@ -380,9 +349,7 @@ class EditProfileActivity : AppCompatActivity() {
         }
     }
 
-    /* =========================================================
-     * Bitmap <-> Base64
-     * ========================================================= */
+    /* ---------------- Bitmap <-> Base64 ---------------- */
     private fun convertBitmapToBase64(bitmap: Bitmap): String {
         val outputStream = ByteArrayOutputStream()
         bitmap.compress(Bitmap.CompressFormat.JPEG, 80, outputStream)
@@ -395,6 +362,8 @@ class EditProfileActivity : AppCompatActivity() {
         return try {
             val decodedBytes = Base64.decode(base64String, Base64.DEFAULT)
             BitmapFactory.decodeByteArray(decodedBytes, 0, decodedBytes.size)
-        } catch (_: Exception) { null }
+        } catch (_: Exception) {
+            null
+        }
     }
 }
