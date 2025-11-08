@@ -54,6 +54,7 @@ class FetchBarangayAddressTask(
             is FireLevelActivity -> activity.handleFetchedAddress(result)
             is OtherEmergencyActivity -> activity.handleFetchedAddress(result)
             is EmergencyMedicalServicesActivity -> activity.handleFetchedAddress(result)
+            is DashboardActivity -> activity.handleFetchedAddress(result)
         }
     }
 

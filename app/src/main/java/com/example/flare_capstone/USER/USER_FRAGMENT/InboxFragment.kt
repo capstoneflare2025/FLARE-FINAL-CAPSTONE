@@ -1,6 +1,5 @@
 package com.example.flare_capstone.USER.USER_FRAGMENT
 
-import android.R
 import android.os.Bundle
 import android.util.Log
 import android.view.LayoutInflater
@@ -21,8 +20,6 @@ import java.util.Locale
 
 class InboxFragment : Fragment() {
     private var _binding: FragmentInboxBinding? = null
-    private val binding get() = _binding!!
-
     private lateinit var responseMessageAdapter: ResponseMessageAdapter
     private val allMessages = mutableListOf<ResponseMessage>()
     private val visibleMessages = mutableListOf<ResponseMessage>()
@@ -56,14 +53,13 @@ class InboxFragment : Fragment() {
         savedInstanceState: Bundle?
     ): View {
         _binding = FragmentInboxBinding.inflate(inflater, container, false)
-        return binding.root
+        return _binding!!.root
+
     }
 
     override fun onResume() {
         super.onResume()
-        // Make sure category and station dropdowns are initialized after resume
-        setupCategoryDropdown()
-        setupStationDropdown()
+
     }
 
 
@@ -82,79 +78,62 @@ class InboxFragment : Fragment() {
             selectedStation = it.getString("selectedStation", "All Fire Stations")
         }
 
-        // Setup dropdowns and filters
-        setupCategoryDropdown()
-        setupStationDropdown()
+        // Recycler + adapter + tabs (guarded by _binding)
+        _binding?.let { b ->
+            responseMessageAdapter = ResponseMessageAdapter(visibleMessages) {
+                applyFilter()
+                unreadMessageCount = allMessages.count { !it.isRead }
+                updateInboxBadge(unreadMessageCount)
+            }
+            b.recyclerView.layoutManager = LinearLayoutManager(context)
+            b.recyclerView.adapter = responseMessageAdapter
 
-        responseMessageAdapter = ResponseMessageAdapter(visibleMessages) {
-            applyFilter()
-            unreadMessageCount = allMessages.count { !it.isRead }
-            updateInboxBadge(unreadMessageCount)
-        }
+            b.tabLayout.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
+                override fun onTabSelected(tab: TabLayout.Tab) {
+                    currentFilter = when (tab.position) {
+                        1 -> FilterMode.READ
+                        2 -> FilterMode.UNREAD
+                        else -> FilterMode.ALL
+                    }
+                    applyFilter()
+                }
+                override fun onTabUnselected(tab: TabLayout.Tab) {}
+                override fun onTabReselected(tab: TabLayout.Tab) {}
+            })
 
-        binding.recyclerView.layoutManager = LinearLayoutManager(context)
-        binding.recyclerView.adapter = responseMessageAdapter
-
-        // Tabs for ALL / READ / UNREAD
-        binding.tabLayout.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
-            override fun onTabSelected(tab: TabLayout.Tab) {
-                currentFilter = when (tab.position) {
-                    1 -> FilterMode.READ
-                    2 -> FilterMode.UNREAD
-                    else -> FilterMode.ALL
+            // Category dropdown (guarded)
+            val categories = listOf(
+                "All Report",
+                "Fire Report",
+                "Other Emergency Report",
+                "Emergency Medical Services Report",
+                "Sms Report"
+            )
+            b.categoryDropdown.setAdapter(
+                ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, categories)
+            )
+            b.categoryDropdown.setText("All Report", false)
+            currentCategoryFilter = CategoryFilter.ALL
+            b.categoryDropdown.setOnItemClickListener { _, _, pos, _ ->
+                currentCategoryFilter = when (pos) {
+                    1 -> CategoryFilter.FIRE
+                    2 -> CategoryFilter.OTHER
+                    3 -> CategoryFilter.EMS
+                    4 -> CategoryFilter.SMS
+                    else -> CategoryFilter.ALL
                 }
                 applyFilter()
             }
-            override fun onTabUnselected(tab: TabLayout.Tab) {}
-            override fun onTabReselected(tab: TabLayout.Tab) {}
-        })
-
-        // Category dropdown
-        val categories = listOf(
-            "All Report",
-            "Fire Report",
-            "Other Emergency Report",
-            "Emergency Medical Services Report",
-            "Sms Report"
-        )
-        binding.categoryDropdown.setAdapter(
-            ArrayAdapter(requireContext(), R.layout.simple_list_item_1, categories)
-        )
-        binding.categoryDropdown.setText("All Report", false)
-        currentCategoryFilter = CategoryFilter.ALL
-        binding.categoryDropdown.setOnItemClickListener { _, _, pos, _ ->
-            currentCategoryFilter = when (pos) {
-                1 -> CategoryFilter.FIRE
-                2 -> CategoryFilter.OTHER
-                3 -> CategoryFilter.EMS
-                4 -> CategoryFilter.SMS
-                else -> CategoryFilter.ALL
-            }
-            applyFilter()
         }
 
-        // ✅ Load station names first, then user messages
+        // ✅ Load station names first, then build the station dropdown and attach listeners
         loadStationNames {
-            setupStationDropdown()
-            loadUserAndAttach()
+            if (!isAdded || _binding == null) return@loadStationNames
+            setupStationDropdown()   // uses values filled by loadStationNames
+            loadUserAndAttach()      // attach Firebase listeners after UI is ready
         }
     }
 
-    private fun setupCategoryDropdown() {
-        val categories = listOf(
-            "All Report",
-            "Fire Report",
-            "Other Emergency Report",
-            "Emergency Medical Services Report",
-            "Sms Report"
-        )
-        binding.categoryDropdown.setAdapter(
-            ArrayAdapter(requireContext(), R.layout.simple_list_item_1, categories)
-        )
-        binding.categoryDropdown.setText("All Report", false)
-    }
-
-    // ✅ Fetch display names for all stations from /Profile/name
     private fun loadStationNames(onComplete: () -> Unit) {
         val ref = FirebaseDatabase.getInstance().getReference(rootNode)
         var remaining = stationNodes.size
@@ -162,36 +141,40 @@ class InboxFragment : Fragment() {
             ref.child(station).child("Profile").child("name")
                 .addListenerForSingleValueEvent(object : ValueEventListener {
                     override fun onDataChange(snapshot: DataSnapshot) {
-                        val displayName = snapshot.getValue(String::class.java)
-                        if (!displayName.isNullOrBlank()) {
-                            stationDisplayNames[station] = displayName.trim()
-                        } else {
-                            stationDisplayNames[station] = station
+                        stationDisplayNames[station] =
+                            snapshot.getValue(String::class.java)?.trim().takeUnless { it.isNullOrBlank() }
+                                ?: station
+                        if (--remaining == 0) {
+                            if (_binding != null) onComplete()   // <- guard
                         }
-                        if (--remaining == 0) onComplete()
                     }
-
                     override fun onCancelled(error: DatabaseError) {
                         stationDisplayNames[station] = station
-                        if (--remaining == 0) onComplete()
+                        if (--remaining == 0) {
+                            if (_binding != null) onComplete()   // <- guard
+                        }
                     }
                 })
         }
     }
 
+
     // ✅ Dynamically populate station dropdown with names
     private fun setupStationDropdown() {
-        val stationOptions = mutableListOf("All Fire Stations")
-        stationOptions.addAll(stationDisplayNames.values)
-        binding.stationDropdown.setAdapter(
-            ArrayAdapter(requireContext(), R.layout.simple_list_item_1, stationOptions)
+        val b = _binding ?: return
+        val stationOptions = mutableListOf("All Fire Stations").apply {
+            addAll(stationDisplayNames.values)
+        }
+        b.stationDropdown.setAdapter(
+            ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, stationOptions)
         )
-        binding.stationDropdown.setText("All Fire Stations", false)
-        binding.stationDropdown.setOnItemClickListener { _, _, pos, _ ->
+        b.stationDropdown.setText("All Fire Stations", false)
+        b.stationDropdown.setOnItemClickListener { _, _, pos, _ ->
             selectedStation = stationOptions[pos]
             applyFilter()
         }
     }
+
 
     private fun loadUserAndAttach() {
         val userEmail = FirebaseAuth.getInstance().currentUser?.email

@@ -111,8 +111,8 @@ class FireLevelActivity : AppCompatActivity() {
     /* ========= Station profiles (for nearest station resolution) ========= */
     private val profileKeyByStation = mapOf(
         "CapstoneFlare/LaFilipinaFireStation" to "Profile",
-        "CapstoneFlare/CanocotanFireStation"  to "Profile",
-        "CapstoneFlare/MabiniFireStation"     to "Profile"
+        "CapstoneFlare/CanocotanFireStation" to "Profile",
+        "CapstoneFlare/MabiniFireStation" to "Profile"
     )
 
     private data class StationInfo(
@@ -124,6 +124,7 @@ class FireLevelActivity : AppCompatActivity() {
     )
 
     /* ========================================================= */
+    @RequiresPermission(allOf = [Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION])
     override fun onCreate(savedInstanceState: Bundle?) {
         ThemeManager.applyTheme(this)
         super.onCreate(savedInstanceState)
@@ -143,8 +144,16 @@ class FireLevelActivity : AppCompatActivity() {
         registerReceiver(deliveredReceiver, IntentFilter(DELIVERED), RECEIVER_NOT_EXPORTED)
 
 // Ask for SMS permission early (optional but nice UX)
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.SEND_SMS), SMS_PERMISSION_REQUEST_CODE)
+        if (ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.SEND_SMS
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.SEND_SMS),
+                SMS_PERMISSION_REQUEST_CODE
+            )
         }
 
         // Location
@@ -193,6 +202,7 @@ class FireLevelActivity : AppCompatActivity() {
                 }
             }
         }
+
         override fun onLost(network: Network) {
             runOnUiThread {
                 showLoadingDialog("No internet connection")
@@ -203,6 +213,7 @@ class FireLevelActivity : AppCompatActivity() {
         }
     }
 
+    @RequiresPermission(Manifest.permission.ACCESS_NETWORK_STATE)
     private fun isConnected(): Boolean {
         val n = connectivityManager.activeNetwork ?: return false
         val c = connectivityManager.getNetworkCapabilities(n) ?: return false
@@ -212,32 +223,62 @@ class FireLevelActivity : AppCompatActivity() {
     private fun showLoadingDialog(message: String) {
         if (loadingDialog == null) {
             val builder = AlertDialog.Builder(this)
-            val view = layoutInflater.inflate(com.example.flare_capstone.R.layout.custom_loading_dialog, null)
+            val view = layoutInflater.inflate(
+                com.example.flare_capstone.R.layout.custom_loading_dialog,
+                null
+            )
             builder.setView(view).setCancelable(false)
             loadingDialog = builder.create()
 
         }
         loadingDialog?.show()
-        loadingDialog?.findViewById<TextView>(com.example.flare_capstone.R.id.loading_message)?.text = message
+        loadingDialog?.findViewById<TextView>(com.example.flare_capstone.R.id.loading_message)?.text =
+            message
     }
-    private fun hideLoadingDialog() { loadingDialog?.dismiss() }
+
+    private fun hideLoadingDialog() {
+        loadingDialog?.dismiss()
+    }
+
 
     /* ======================== Permissions ====================== */
+    @RequiresPermission(allOf = [Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION])
     private fun checkPermissionsAndGetLocation() {
-        val fineOk = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
-        val coarseOk = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val fineOk = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        val coarseOk = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
         if (fineOk && coarseOk) requestLocationUpdates()
-        else ActivityCompat.requestPermissions(this,
-            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
-            LOCATION_PERMISSION_REQUEST_CODE)
+        else ActivityCompat.requestPermissions(
+            this,
+            arrayOf(
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            ),
+            LOCATION_PERMISSION_REQUEST_CODE
+        )
     }
+
     private fun checkCameraPermissionAndStart() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+        if (ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.CAMERA
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
             startCameraPreview()
         } else {
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), CAMERA_PERMISSION_REQUEST_CODE)
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.CAMERA),
+                CAMERA_PERMISSION_REQUEST_CODE
+            )
         }
     }
+
     @RequiresPermission(allOf = [Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION])
     override fun onRequestPermissionsResult(code: Int, p: Array<out String>, r: IntArray) {
         super.onRequestPermissionsResult(code, p, r)
@@ -245,14 +286,171 @@ class FireLevelActivity : AppCompatActivity() {
             LOCATION_PERMISSION_REQUEST_CODE ->
                 if (r.all { it == PackageManager.PERMISSION_GRANTED }) requestLocationUpdates()
                 else Toast.makeText(this, "Location permission needed.", Toast.LENGTH_SHORT).show()
+
             CAMERA_PERMISSION_REQUEST_CODE ->
                 if (r.all { it == PackageManager.PERMISSION_GRANTED }) startCameraPreview()
                 else Toast.makeText(this, "Camera permission needed.", Toast.LENGTH_SHORT).show()
         }
     }
 
+
+    /* Send SMS to Users Nearest*/
+
+    // --- Location string normalization & matching ---
+    private fun normLoc(s: String?): String {
+        if (s.isNullOrBlank()) return ""
+        return s.lowercase()
+            .replace("ñ", "n")
+            .replace(Regex("""\b(brgy\.?|barangay)\b"""), "")   // drop "Barangay/Brgy"
+            .replace(Regex("""\bcity\b"""), "")                  // drop "City"
+            .replace(Regex("""[^a-z0-9]+"""), " ")               // keep alnum, collapse others
+            .trim()
+    }
+
+
+    // Simple token-based match, forgiving about punctuation/order.
+// e.g. "Barangay San Miguel, Tagum City" ≈ "San Miguel Tagum"
+    private fun locationsMatch(a: String?, b: String?): Boolean {
+        val A = normLoc(a)
+        val B = normLoc(b)
+        if (A.isBlank() || B.isBlank()) return false
+        if (A == B) return true
+        // require at least two shared tokens to reduce false positives
+        val toksA = A.split(' ').filter { it.length >= 3 }.toSet()
+        val toksB = B.split(' ').filter { it.length >= 3 }.toSet()
+        val overlap = toksA.intersect(toksB).size
+        return overlap >= 2
+    }
+
+    // Optional: distance-based fallback when both sides have lat/lon
+    private fun closeBy(
+        lat1: Double?,
+        lon1: Double?,
+        lat2: Double?,
+        lon2: Double?,
+        meters: Float = 3000f
+    ): Boolean {
+        if (lat1 == null || lon1 == null || lat2 == null || lon2 == null) return false
+        val out = FloatArray(1)
+        Location.distanceBetween(lat1, lon1, lat2, lon2, out)
+        return out[0] <= meters
+    }
+
+    private fun sendUserSMS(numberRaw: String, msg: String) {
+        val granted = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.SEND_SMS
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!granted) {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.SEND_SMS),
+                SMS_PERMISSION_REQUEST_CODE
+            )
+            return
+        }
+        val number = normalizePhNumber(numberRaw)
+        if (!looksLikePhone(number)) return
+
+        try {
+            val sms = pickSmsManager()
+            val sentPI = PendingIntent.getBroadcast(
+                this,
+                0,
+                Intent(SENT),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val deliveredPI = PendingIntent.getBroadcast(
+                this,
+                0,
+                Intent(DELIVERED),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            if (msg.length > 160) {
+                val parts = sms.divideMessage(msg)
+                val sList = ArrayList(parts.map { sentPI })
+                val dList = ArrayList(parts.map { deliveredPI })
+                sms.sendMultipartTextMessage(number, null, parts, sList, dList)
+            } else {
+                sms.sendTextMessage(number, null, msg, sentPI, deliveredPI)
+            }
+        } catch (_: Exception) { /* already toasts via receivers */
+        }
+    }
+
+    private fun notifyNearbyUsers(
+        reporterUid: String,
+        incidentType: String,
+        date: String,
+        time: String,
+        incidentExactLoc: String,
+        incidentLat: Double,
+        incidentLon: Double
+    ) {
+        val usersRef = FirebaseDatabase.getInstance().getReference("Users")
+
+        usersRef.addListenerForSingleValueEvent(object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val sentTo = mutableSetOf<String>()   // dedupe by phone
+                var sentCount = 0
+                val cap = 100  // safety cap
+
+                for (u in snapshot.children) {
+                    if (sentCount >= cap) break
+
+                    val uid = u.key ?: continue
+                    if (uid == reporterUid) continue
+
+                    val contact = u.child("contact").getValue(String::class.java)?.trim().orEmpty()
+                    if (contact.isBlank()) continue
+
+                    val userExact = u.child("exactLocation").getValue(String::class.java)
+                    val userLat = u.child("latitude").getValue(Double::class.java)
+                    val userLon = u.child("longitude").getValue(Double::class.java)
+
+                    val match = locationsMatch(incidentExactLoc, userExact) ||
+                            closeBy(incidentLat, incidentLon, userLat, userLon, 3000f)
+
+                    if (!match) continue
+
+                    val normalized = normalizePhNumber(contact)
+                    if (!looksLikePhone(normalized)) continue
+                    if (!sentTo.add(normalized)) continue   // skip duplicates
+
+                    val msg = """
+                    FLARE FIRE ALERT
+                    Type: $incidentType
+                    When: $date $time
+                    Location: $incidentExactLoc
+                 
+                """.trimIndent()
+
+                    sendUserSMS(normalized, msg)
+                    sentCount++
+                }
+
+                if (sentCount > 0) {
+                    Toast.makeText(
+                        this@FireLevelActivity,
+                        "Alert sent to $sentCount nearby users.",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+
+            override fun onCancelled(error: DatabaseError) {
+                Toast.makeText(
+                    this@FireLevelActivity,
+                    "User scan cancelled: ${error.message}",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        })
+    }
+
+
     /* =================== Dropdown from Realtime DB ============== */
-    private fun populateDropdownFromDB() {  
+    private fun populateDropdownFromDB() {
         val db = FirebaseDatabase.getInstance().reference
             .child("TagumCityCentralFireStation")
             .child("ManageApplication")
@@ -265,7 +463,11 @@ class FireLevelActivity : AppCompatActivity() {
                 val asString = snapshot.getValue(String::class.java)
                 if (!asString.isNullOrBlank()) {
                     val items = asString.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-                    val adapter = ArrayAdapter(this@FireLevelActivity, android.R.layout.simple_list_item_1, items)
+                    val adapter = ArrayAdapter(
+                        this@FireLevelActivity,
+                        android.R.layout.simple_list_item_1,
+                        items
+                    )
                     binding.emergencyDropdown.setAdapter(adapter)
                     binding.emergencyDropdown.setOnClickListener { binding.emergencyDropdown.showDropDown() }
                     return
@@ -274,21 +476,39 @@ class FireLevelActivity : AppCompatActivity() {
                 if (snapshot.exists() && snapshot.childrenCount > 0) {
                     val list = mutableListOf<String>()
                     snapshot.children.forEach { child ->
-                        child.getValue(String::class.java)?.trim()?.takeIf { it.isNotEmpty() }?.let(list::add)
+                        child.getValue(String::class.java)?.trim()?.takeIf { it.isNotEmpty() }
+                            ?.let(list::add)
                     }
                     if (list.isNotEmpty()) {
-                        val adapter = ArrayAdapter(this@FireLevelActivity, android.R.layout.simple_list_item_1, list)
+                        val adapter = ArrayAdapter(
+                            this@FireLevelActivity,
+                            android.R.layout.simple_list_item_1,
+                            list
+                        )
                         binding.emergencyDropdown.setAdapter(adapter)
                         binding.emergencyDropdown.setOnClickListener { binding.emergencyDropdown.showDropDown() }
                     } else {
-                        Toast.makeText(this@FireLevelActivity, "No options found.", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(
+                            this@FireLevelActivity,
+                            "No options found.",
+                            Toast.LENGTH_SHORT
+                        ).show()
                     }
                 } else {
-                    Toast.makeText(this@FireLevelActivity, "Option node is empty.", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(
+                        this@FireLevelActivity,
+                        "Option node is empty.",
+                        Toast.LENGTH_SHORT
+                    ).show()
                 }
             }
+
             override fun onCancelled(error: DatabaseError) {
-                Toast.makeText(this@FireLevelActivity, "Failed to load options: ${error.message}", Toast.LENGTH_SHORT).show()
+                Toast.makeText(
+                    this@FireLevelActivity,
+                    "Failed to load options: ${error.message}",
+                    Toast.LENGTH_SHORT
+                ).show()
             }
         })
     }
@@ -306,7 +526,12 @@ class FireLevelActivity : AppCompatActivity() {
                 .build()
             try {
                 provider.unbindAll()
-                provider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview, imageCapture)
+                provider.bindToLifecycle(
+                    this,
+                    CameraSelector.DEFAULT_BACK_CAMERA,
+                    preview,
+                    imageCapture
+                )
             } catch (e: Exception) {
                 Toast.makeText(this, "Camera start failed: ${e.message}", Toast.LENGTH_SHORT).show()
             }
@@ -320,8 +545,15 @@ class FireLevelActivity : AppCompatActivity() {
 
         ic.takePicture(opts, cameraExecutor, object : ImageCapture.OnImageSavedCallback {
             override fun onError(e: ImageCaptureException) {
-                runOnUiThread { Toast.makeText(this@FireLevelActivity, "Capture failed: ${e.message}", Toast.LENGTH_SHORT).show() }
+                runOnUiThread {
+                    Toast.makeText(
+                        this@FireLevelActivity,
+                        "Capture failed: ${e.message}",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
             }
+
             override fun onImageSaved(r: ImageCapture.OutputFileResults) {
                 capturedFile = file
                 capturedOnce = true
@@ -336,7 +568,10 @@ class FireLevelActivity : AppCompatActivity() {
     }
 
     private fun retakePhoto() {
-        try { capturedFile?.delete() } catch (_: Exception) {}
+        try {
+            capturedFile?.delete()
+        } catch (_: Exception) {
+        }
         capturedFile = null
         capturedOnce = false
         binding.capturedPhoto.setImageDrawable(null)
@@ -372,7 +607,9 @@ class FireLevelActivity : AppCompatActivity() {
         Location.distanceBetween(lat, lon, TAGUM_CENTER_LAT, TAGUM_CENTER_LON, res)
         return res[0] <= TAGUM_RADIUS_METERS
     }
-    private fun looksLikeTagum(text: String?) = !text.isNullOrBlank() && text.contains("tagum", ignoreCase = true)
+
+    private fun looksLikeTagum(text: String?) =
+        !text.isNullOrBlank() && text.contains("tagum", ignoreCase = true)
 
     fun handleFetchedAddress(address: String?) {
         val cleaned = address?.trim().orEmpty()
@@ -382,7 +619,10 @@ class FireLevelActivity : AppCompatActivity() {
             ok -> "Within Tagum vicinity – https://www.google.com/maps?q=$latitude,$longitude"
             else -> ""
         }
-        if (ok) endLocationConfirmation(true, "Location confirmed${if (!readableAddress.isNullOrBlank()) ": $readableAddress" else ""}")
+        if (ok) endLocationConfirmation(
+            true,
+            "Location confirmed${if (!readableAddress.isNullOrBlank()) ": $readableAddress" else ""}"
+        )
         else endLocationConfirmation(false, "Outside Tagum area. You can't submit a report.")
     }
 
@@ -441,7 +681,8 @@ class FireLevelActivity : AppCompatActivity() {
     private fun showSendConfirmationDialog() {
         if (!locationConfirmed) {
             if (!isResolvingLocation) beginLocationConfirmation()
-            Toast.makeText(this, "Please wait — confirming your location…", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Please wait — confirming your location…", Toast.LENGTH_SHORT)
+                .show()
             return
         }
 
@@ -488,11 +729,20 @@ class FireLevelActivity : AppCompatActivity() {
         } else {
             val waitMs = 5 * 60 * 1000 - (now - lastReportTime)
             val original = binding.sendButton.text.toString()
-            Toast.makeText(this, "Please wait ${waitMs / 1000} seconds before submitting again.", Toast.LENGTH_LONG).show()
+            Toast.makeText(
+                this,
+                "Please wait ${waitMs / 1000} seconds before submitting again.",
+                Toast.LENGTH_LONG
+            ).show()
             binding.sendButton.isEnabled = false
             object : CountDownTimer(waitMs, 1000) {
-                override fun onTick(ms: Long) { binding.sendButton.text = "Wait (${ms / 1000})" }
-                override fun onFinish() { binding.sendButton.text = original; binding.sendButton.isEnabled = true }
+                override fun onTick(ms: Long) {
+                    binding.sendButton.text = "Wait (${ms / 1000})"
+                }
+
+                override fun onFinish() {
+                    binding.sendButton.text = original; binding.sendButton.isEnabled = true
+                }
             }.start()
         }
     }
@@ -519,8 +769,10 @@ class FireLevelActivity : AppCompatActivity() {
                     return@addOnSuccessListener
                 }
 
-                val formattedDate = SimpleDateFormat("MM/dd/yyyy", Locale.getDefault()).format(Date(currentTime))
-                val formattedTime = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(currentTime))
+                val formattedDate =
+                    SimpleDateFormat("MM/dd/yyyy", Locale.getDefault()).format(Date(currentTime))
+                val formattedTime =
+                    SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(currentTime))
                 val type = binding.emergencyDropdown.text?.toString()?.trim().orEmpty()
 
                 val baseReport = mutableMapOf<String, Any?>(
@@ -545,7 +797,11 @@ class FireLevelActivity : AppCompatActivity() {
                 readAllStationProfiles { stations ->
                     if (stations.isEmpty()) {
                         resetOverlay()
-                        Toast.makeText(this, "No station profiles configured. Cannot submit report.", Toast.LENGTH_LONG).show()
+                        Toast.makeText(
+                            this,
+                            "No station profiles configured. Cannot submit report.",
+                            Toast.LENGTH_LONG
+                        ).show()
                         return@readAllStationProfiles
                     }
 
@@ -583,6 +839,17 @@ class FireLevelActivity : AppCompatActivity() {
                                 )
                             }
 
+                            notifyNearbyUsers(
+                                reporterUid = userId,
+                                incidentType = type,
+                                date = formattedDate,
+                                time = formattedTime,
+                                incidentExactLoc = addressText,         // use the same text you SMS’d to the station
+                                incidentLat = latitude,
+                                incidentLon = longitude
+                            )
+
+
                             onReportStoredSuccess(
                                 currentTime,
                                 "Report submitted to ${nearest.name}. Please wait for responder."
@@ -590,16 +857,20 @@ class FireLevelActivity : AppCompatActivity() {
                         }
                         .addOnFailureListener {
                             resetOverlay()
-                            Toast.makeText(this, "Failed to submit: ${it.message}", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(
+                                this,
+                                "Failed to submit: ${it.message}",
+                                Toast.LENGTH_SHORT
+                            ).show()
                         }
                 }
             }
             .addOnFailureListener {
                 resetOverlay()
-                Toast.makeText(this, "Failed to fetch user data: ${it.message}", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Failed to fetch user data: ${it.message}", Toast.LENGTH_SHORT)
+                    .show()
             }
     }
-
 
 
     private fun onReportStoredSuccess(currentTime: Long, toastMsg: String) {
@@ -607,8 +878,14 @@ class FireLevelActivity : AppCompatActivity() {
         val originalText = binding.sendButton.text.toString()
         val waitMs = 5 * 60 * 1000
         object : CountDownTimer(waitMs.toLong(), 1000) {
-            override fun onTick(ms: Long) { binding.sendButton.text = "Wait (${ms / 1000})"; binding.sendButton.isEnabled = false }
-            override fun onFinish() { binding.sendButton.text = originalText; binding.sendButton.isEnabled = true }
+            override fun onTick(ms: Long) {
+                binding.sendButton.text = "Wait (${ms / 1000})"; binding.sendButton.isEnabled =
+                    false
+            }
+
+            override fun onFinish() {
+                binding.sendButton.text = originalText; binding.sendButton.isEnabled = true
+            }
         }.start()
         Toast.makeText(this, toastMsg, Toast.LENGTH_SHORT).show()
         resetOverlay()
@@ -640,7 +917,15 @@ class FireLevelActivity : AppCompatActivity() {
                         val contact = s.child("contact").value?.toString().orEmpty()
                         val lat = s.child("latitude").value?.toString()?.toDoubleOrNull() ?: 0.0
                         val lon = s.child("longitude").value?.toString()?.toDoubleOrNull() ?: 0.0
-                        results.add(StationInfo(node = node, name = name, contact = contact, lat = lat, lon = lon))
+                        results.add(
+                            StationInfo(
+                                node = node,
+                                name = name,
+                                contact = contact,
+                                lat = lat,
+                                lon = lon
+                            )
+                        )
                     }
                     if (--pending == 0) onDone(results)
                 }
@@ -676,12 +961,19 @@ class FireLevelActivity : AppCompatActivity() {
             }
             return sample
         }
+
         val inSample = computeSampleSize(opts.outWidth, opts.outHeight, maxDim)
         val decodeOpts = android.graphics.BitmapFactory.Options().apply {
             inSampleSize = inSample
             inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
         }
-        val decoded = FileInputStream(file).use { android.graphics.BitmapFactory.decodeStream(it, null, decodeOpts) }
+        val decoded = FileInputStream(file).use {
+            android.graphics.BitmapFactory.decodeStream(
+                it,
+                null,
+                decodeOpts
+            )
+        }
             ?: return ""
 
         val w = decoded.width
@@ -722,12 +1014,13 @@ class FireLevelActivity : AppCompatActivity() {
         var n = raw.filter { it.isDigit() || it == '+' }
         n = when {
             n.startsWith("+63") && n.length == 13 -> n
-            n.startsWith("0") && n.length == 11   -> "+63" + n.drop(1)
-            n.length == 10 && n.first() == '9'    -> "+63$n"
+            n.startsWith("0") && n.length == 11 -> "+63" + n.drop(1)
+            n.length == 10 && n.first() == '9' -> "+63$n"
             else -> n
         }
         return n
     }
+
     private fun looksLikePhone(n: String): Boolean =
         n.startsWith("+") && n.count { it.isDigit() } in 10..15
 
@@ -741,16 +1034,24 @@ class FireLevelActivity : AppCompatActivity() {
         time: String,
         addressOrMap: String
     ) {
-        val granted = ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED
+        val granted = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.SEND_SMS
+        ) == PackageManager.PERMISSION_GRANTED
         if (!granted) {
             Toast.makeText(this, "SMS permission not granted.", Toast.LENGTH_SHORT).show()
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.SEND_SMS), SMS_PERMISSION_REQUEST_CODE)
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.SEND_SMS),
+                SMS_PERMISSION_REQUEST_CODE
+            )
             return
         }
 
         val number = normalizePhNumber(stationContact)
         if (!looksLikePhone(number)) {
-            Toast.makeText(this, "Station contact invalid: $stationContact", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Station contact invalid: $stationContact", Toast.LENGTH_SHORT)
+                .show()
             return
         }
 
@@ -785,6 +1086,7 @@ class FireLevelActivity : AppCompatActivity() {
             Toast.makeText(this, "Failed to send SMS: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
+
 
 
 }

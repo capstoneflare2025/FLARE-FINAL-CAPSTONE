@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:padding="16dp"
+    android:background="?android:attr/selectableItemBackground">
+
+    <!-- Avatar Image -->
+    <ImageView
+        android:id="@+id/ivAvatar"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:src="@drawable/ic_fire"
+        android:layout_marginEnd="12dp"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintVertical_bias="0.5" />
+
+    <!-- Main Title (e.g., Report Type) -->
+    <TextView
+        android:id="@+id/tvTitle"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:text="Fire Report"
+        android:textStyle="bold"
+        android:textColor="?android:attr/textColorPrimary"
+        android:textSize="16sp"
+        app:layout_constraintStart_toEndOf="@+id/ivAvatar"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintEnd_toStartOf="@+id/dotUnread"
+        app:layout_constraintHorizontal_bias="0" />
+
+    <!-- Subtitle: Type of Report -->
+    <TextView
+        android:id="@+id/tvSubtitle"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:text="Emergency Medical Services"
+        android:textColor="?android:attr/textColorSecondary"
+        android:textSize="14sp"
+        app:layout_constraintStart_toStartOf="@+id/tvTitle"
+        app:layout_constraintTop_toBottomOf="@+id/tvTitle"
+        app:layout_constraintEnd_toStartOf="@+id/dotUnread" />
+
+    <!-- When the Report was Created -->
+    <TextView
+        android:id="@+id/tvSubtitle1"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:text="11/08/2025 22:26:16"
+        android:textColor="?android:attr/textColorSecondary"
+        android:textSize="12sp"
+        app:layout_constraintStart_toStartOf="@+id/tvSubtitle"
+        app:layout_constraintTop_toBottomOf="@+id/tvSubtitle"
+        app:layout_constraintEnd_toStartOf="@+id/dotUnread" />
+
+    <!-- Report Location -->
+    <TextView
+        android:id="@+id/tvSubtitle2"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:text="Tagum City Fire Station"
+        android:textColor="?android:attr/textColorSecondary"
+        android:textSize="12sp"
+        app:layout_constraintStart_toStartOf="@+id/tvSubtitle1"
+        app:layout_constraintTop_toBottomOf="@+id/tvSubtitle1"
+        app:layout_constraintEnd_toStartOf="@+id/dotUnread" />
+
+    <!-- Map Link -->
+    <TextView
+        android:id="@+id/tvSubtitle3"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:text="View on Map"
+        android:textColor="@android:color/holo_blue_dark"
+        android:textSize="12sp"
+        android:clickable="true"
+        android:focusable="true"
+        app:layout_constraintStart_toStartOf="@+id/tvSubtitle2"
+        app:layout_constraintTop_toBottomOf="@+id/tvSubtitle2"
+        app:layout_constraintEnd_toStartOf="@+id/dotUnread" />
+
+    <!-- Unread dot -->
+    <View
+        android:id="@+id/dotUnread"
+        android:layout_width="8dp"
+        android:layout_height="8dp"
+        android:background="@drawable/bg_unread_dot"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintHorizontal_bias="1.0" />
+</androidx.constraintlayout.widget.ConstraintLayout>

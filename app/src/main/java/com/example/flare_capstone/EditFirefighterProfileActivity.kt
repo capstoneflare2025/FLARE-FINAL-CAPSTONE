@@ -184,6 +184,10 @@ class EditFirefighterProfileActivity : AppCompatActivity() {
             binding.contact.isFocusable = true
             binding.name.isFocusableInTouchMode = true
             binding.contact.isFocusableInTouchMode = true
+
+            // Show photo change options
+            binding.profileIcon.isClickable = true
+            binding.changePhotoIcon.visibility = View.VISIBLE
         } else {
             // Change button text back to "Edit"
             binding.editButton.text = "Edit"
@@ -193,6 +197,9 @@ class EditFirefighterProfileActivity : AppCompatActivity() {
             binding.name.isFocusableInTouchMode = false
             binding.contact.isFocusableInTouchMode = false
 
+            // Hide photo change options
+            binding.profileIcon.isClickable = false
+            binding.changePhotoIcon.visibility = View.GONE
             // Save changes if any (if Edit is switched to Save)
             saveProfileChanges()
         }
@@ -203,8 +210,9 @@ class EditFirefighterProfileActivity : AppCompatActivity() {
         val newName = binding.name.text.toString().trim()
         val newContact = binding.contact.text.toString().trim()
 
-        if (newName != originalName || newContact != originalContact) {
-            binding.editButton.text = "Save"  // Change to Save if any change
+        // If any field has changed or the image was removed or updated
+        if (newName != originalName || newContact != originalContact || removeProfileImageRequested || hasProfileImage != (base64ProfileImage != null)) {
+            binding.editButton.text = "Save"  // Show Save if any change
         } else {
             binding.editButton.text = "Cancel"  // Revert back to Cancel if no changes
         }
@@ -234,7 +242,11 @@ class EditFirefighterProfileActivity : AppCompatActivity() {
             "name" to newName,
             "contact" to newContact
         )
-        if (base64ProfileImage != null && !removeProfileImageRequested) {
+        // If the profile image has been removed (removeProfileImageRequested == true), we need to clear the profile field.
+        if (removeProfileImageRequested) {
+            updates["profile"] = ""  // Clear the profile image from the database
+        } else if (base64ProfileImage != null) {
+            // If a new profile image has been selected, update the profile image in the database
             updates["profile"] = base64ProfileImage!!
         }
 
@@ -256,6 +268,8 @@ class EditFirefighterProfileActivity : AppCompatActivity() {
 
     /* ---------------- Image Picker ---------------- */
     private fun showImageSourceSheet() {
+        if (!isEditing) return  // Don't show options if not in edit mode
+
         val options = if (hasProfileImage)
             arrayOf("Take photo", "Choose from gallery", "Remove photo")
         else
@@ -267,11 +281,14 @@ class EditFirefighterProfileActivity : AppCompatActivity() {
                     "Take photo" -> ensureCameraAndOpen()
                     "Choose from gallery" -> ensureGalleryAndOpen()
                     "Remove photo" -> {
-                        binding.profileIcon.setImageResource(R.drawable.ic_camera_profile)
+                        binding.profileIcon.setImageResource(R.drawable.ic_profile)
                         base64ProfileImage = null
                         hasProfileImage = false
                         removeProfileImageRequested = true
+                        // After removing the photo, we need to detect the change and set the button to "Save"
+                        binding.editButton.text = "Save"  // Set the button text to Save, indicating the user has made a change
                         Toast.makeText(this, "Photo removed (pending save)", Toast.LENGTH_SHORT).show()
+
                     }
                 }
             }.show()
@@ -327,6 +344,7 @@ class EditFirefighterProfileActivity : AppCompatActivity() {
                 base64ProfileImage = convertBitmapToBase64(imageBitmap)
                 hasProfileImage = true
                 removeProfileImageRequested = false
+                binding.editButton.text = "Save"
                 Toast.makeText(this, "Profile picture updated (pending save)", Toast.LENGTH_SHORT).show()
             }
             GALLERY_REQUEST_CODE -> {
@@ -336,6 +354,7 @@ class EditFirefighterProfileActivity : AppCompatActivity() {
                 base64ProfileImage = convertBitmapToBase64(bitmap)
                 hasProfileImage = true
                 removeProfileImageRequested = false
+                binding.editButton.text = "Save"
                 Toast.makeText(this, "Profile picture updated (pending save)", Toast.LENGTH_SHORT).show()
             }
         }

@@ -250,7 +250,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
-                android:text="Version — Android 11"
+                android:text="Version — Android 13"
                 android:textSize="14sp"
                 android:textColor="?attr/colorOnSurface"/>
 

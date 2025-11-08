@@ -14,6 +14,7 @@ import android.provider.MediaStore
 import android.text.Editable
 import android.text.TextWatcher
 import android.util.Base64
+import android.util.Log
 import android.view.View
 import android.widget.TextView
 import android.widget.Toast
@@ -193,6 +194,10 @@ class EditProfileActivity : AppCompatActivity() {
             binding.contact.isFocusable = true
             binding.name.isFocusableInTouchMode = true
             binding.contact.isFocusableInTouchMode = true
+
+            // Show photo change options
+            binding.profileIcon.isClickable = true
+            binding.changePhotoIcon.visibility = View.VISIBLE
         } else {
             // Change button text back to "Edit"
             binding.editButton.text = "Edit"
@@ -201,6 +206,10 @@ class EditProfileActivity : AppCompatActivity() {
             binding.contact.isFocusable = false
             binding.name.isFocusableInTouchMode = false
             binding.contact.isFocusableInTouchMode = false
+
+            // Hide photo change options
+            binding.profileIcon.isClickable = false
+            binding.changePhotoIcon.visibility = View.GONE
 
             // Save changes if any (if Edit is switched to Save)
             saveProfileChanges()
@@ -212,8 +221,9 @@ class EditProfileActivity : AppCompatActivity() {
         val newName = binding.name.text.toString().trim()
         val newContact = binding.contact.text.toString().trim()
 
-        if (newName != originalName || newContact != originalContact) {
-            binding.editButton.text = "Save"  // Change to Save if any change
+        // Detect change if name, contact, or profile picture has changed
+        if (newName != originalName || newContact != originalContact || removeProfileImageRequested) {
+            binding.editButton.text = "Save"  // Change to Save if any change (including removing photo)
         } else {
             binding.editButton.text = "Cancel"  // Revert back to Cancel if no changes
         }
@@ -241,7 +251,11 @@ class EditProfileActivity : AppCompatActivity() {
         }
 
         val updates = mutableMapOf<String, Any>( "name" to newName, "contact" to newContact )
-        if (base64ProfileImage != null && !removeProfileImageRequested) {
+        // If the profile image has been removed (removeProfileImageRequested == true), we need to clear the profile field.
+        if (removeProfileImageRequested) {
+            updates["profile"] = ""  // Clear the profile image from the database
+        } else if (base64ProfileImage != null) {
+            // If a new profile image has been selected, update the profile image in the database
             updates["profile"] = base64ProfileImage!!
         }
 
@@ -261,8 +275,11 @@ class EditProfileActivity : AppCompatActivity() {
             }
     }
 
+
     /* ---------------- Image Picker ---------------- */
     private fun showImageSourceSheet() {
+        if (!isEditing) return  // Don't show options if not in edit mode
+
         val options = if (hasProfileImage)
             arrayOf("Take photo", "Choose from gallery", "Remove photo")
         else
@@ -274,15 +291,19 @@ class EditProfileActivity : AppCompatActivity() {
                     "Take photo" -> ensureCameraAndOpen()
                     "Choose from gallery" -> ensureGalleryAndOpen()
                     "Remove photo" -> {
-                        binding.profileIcon.setImageResource(R.drawable.ic_profile)
-                        base64ProfileImage = null
-                        hasProfileImage = false
-                        removeProfileImageRequested = true
+                        binding.profileIcon.setImageResource(R.drawable.ic_profile)  // Reset the profile icon
+                        base64ProfileImage = null  // Remove base64 data
+                        hasProfileImage = false  // Update the flag indicating there's no profile image
+                        removeProfileImageRequested = true  // Mark that a photo has been removed
                         Toast.makeText(this, "Photo removed (pending save)", Toast.LENGTH_SHORT).show()
+
+                        // After removing the photo, we need to detect the change and set the button to "Save"
+                        binding.editButton.text = "Save"  // Set the button text to Save, indicating the user has made a change
                     }
                 }
             }.show()
     }
+
 
     /* ---------------- Permissions / Launchers ---------------- */
     private fun ensureCameraAndOpen() {
@@ -290,13 +311,34 @@ class EditProfileActivity : AppCompatActivity() {
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), CAMERA_PERMISSION_REQUEST_CODE)
         } else openCamera()
     }
-
     private fun ensureGalleryAndOpen() {
-        val perm = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_IMAGES else Manifest.permission.READ_EXTERNAL_STORAGE
+        // Check permissions based on Android version
+        val perm = if (Build.VERSION.SDK_INT >= 33) {
+            // For Android 13 and above, use READ_MEDIA_IMAGES
+            Log.d("EditProfileActivity", "Requesting READ_MEDIA_IMAGES permission")
+            Manifest.permission.READ_MEDIA_IMAGES
+        } else {
+            // For older versions, use READ_EXTERNAL_STORAGE
+            Log.d("EditProfileActivity", "Requesting READ_EXTERNAL_STORAGE permission")
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        }
+
+        // Check if we have the required permission
         if (ContextCompat.checkSelfPermission(this, perm) != PackageManager.PERMISSION_GRANTED) {
+            // Log if permission is not granted
+            Log.d("EditProfileActivity", "Permission not granted, requesting permission.")
+            // If permission is not granted, request it
             ActivityCompat.requestPermissions(this, arrayOf(perm), GALLERY_PERMISSION_REQUEST_CODE)
-        } else openGallery()
+        } else {
+            // If permission is already granted, open the gallery
+            Log.d("EditProfileActivity", "Permission granted, opening gallery.")
+            openGallery()
+        }
     }
+
+
+
+
 
     private fun openCamera() {
         val cameraIntent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
@@ -308,25 +350,58 @@ class EditProfileActivity : AppCompatActivity() {
     }
 
     private fun openGallery() {
+        // Log when opening the gallery
+        Log.d("EditProfileActivity", "Opening gallery with Intent.ACTION_PICK")
+
         val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
-        intent.type = "image/*"
-        startActivityForResult(intent, GALLERY_REQUEST_CODE)
+        intent.type = "image/*"  // Ensure we're selecting images only
+
+        // Log if the intent can be resolved
+        if (intent.resolveActivity(packageManager) != null) {
+            Log.d("EditProfileActivity", "Gallery Intent resolved, starting activity.")
+            startActivityForResult(intent, GALLERY_REQUEST_CODE)
+        } else {
+            // Log if the intent cannot be resolved
+            Log.e("EditProfileActivity", "No app found to open the gallery.")
+            Toast.makeText(this, "No gallery app found", Toast.LENGTH_SHORT).show()
+        }
     }
+
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (grantResults.isEmpty() || grantResults[0] != PackageManager.PERMISSION_GRANTED
-        ) return
+
+
+        if (grantResults.isEmpty() || grantResults[0] != PackageManager.PERMISSION_GRANTED) {
+            // Log permission denied
+            Log.d("EditProfileActivity", "Permission denied to access the gallery/storage.")
+            Toast.makeText(this, "Permission denied to read your external storage", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        // Log if permission is granted
+        Log.d("EditProfileActivity", "Permission granted to access the gallery/storage.")
+
+        // If permission is granted, open the gallery
         when (requestCode) {
-            CAMERA_PERMISSION_REQUEST_CODE -> openCamera()
-            GALLERY_PERMISSION_REQUEST_CODE -> openGallery()
+            GALLERY_PERMISSION_REQUEST_CODE -> {
+                openGallery()
+            }
         }
     }
+
 
     @Deprecated("Using startActivityForResult; migrate to Activity Result APIs when convenient")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (resultCode != RESULT_OK) return
+        // Log the resultCode and requestCode for debugging
+        Log.d("EditProfileActivity", "onActivityResult called with requestCode: $requestCode, resultCode: $resultCode")
+
+        if (resultCode != RESULT_OK) {
+            Log.d("EditProfileActivity", "Result was not OK, no image selected.")
+            return
+        }
+
 
         when (requestCode) {
             CAMERA_REQUEST_CODE -> {
@@ -335,6 +410,8 @@ class EditProfileActivity : AppCompatActivity() {
                 base64ProfileImage = convertBitmapToBase64(imageBitmap)
                 hasProfileImage = true
                 removeProfileImageRequested = false
+                // Immediately update the "Save" button text to "Save"
+                binding.editButton.text = "Save"
                 Toast.makeText(this, "Profile picture updated (pending save)", Toast.LENGTH_SHORT).show()
             }
             GALLERY_REQUEST_CODE -> {
@@ -344,6 +421,8 @@ class EditProfileActivity : AppCompatActivity() {
                 base64ProfileImage = convertBitmapToBase64(bitmap)
                 hasProfileImage = true
                 removeProfileImageRequested = false
+                // Immediately update the "Save" button text to "Save"
+                binding.editButton.text = "Save"
                 Toast.makeText(this, "Profile picture updated (pending save)", Toast.LENGTH_SHORT).show()
             }
         }

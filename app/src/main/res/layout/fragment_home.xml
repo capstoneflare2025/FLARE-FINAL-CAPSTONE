@@ -23,6 +23,21 @@
             app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent"/>
+        <!-- Notifications icon (NO MENU) -->
+
+<!--        <ImageView-->
+<!--            android:id="@+id/iv_notifications"-->
+<!--            android:layout_width="50dp"-->
+<!--            android:layout_height="50dp"-->
+<!--            android:padding="12dp"-->
+<!--            android:src="@drawable/notification"-->
+<!--            android:background="?attr/selectableItemBackgroundBorderless"-->
+<!--            app:tint="?attr/colorOnSurface"-->
+<!--            app:layout_constraintTop_toTopOf="@id/topAppBar"-->
+<!--            app:layout_constraintBottom_toBottomOf="@id/topAppBar"-->
+<!--            app:layout_constraintEnd_toEndOf="@id/topAppBar"-->
+<!--            android:layout_marginEnd="4dp"/>-->
+
 
         <!-- Logo (kept your id) -->
         <ImageView

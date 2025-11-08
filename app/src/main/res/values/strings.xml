@@ -84,6 +84,7 @@
     <string-array name="other_emergency_options">
         <item>Collapsed Structure</item>
         <item>Flood</item>
+        <item>Fallen Tree</item>
         <item>Hazardous Material (e.g. Gas Leak)</item>
     </string-array>
 

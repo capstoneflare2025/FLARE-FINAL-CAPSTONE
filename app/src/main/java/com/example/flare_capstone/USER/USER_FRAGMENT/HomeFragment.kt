@@ -9,14 +9,18 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.os.Bundle
 import android.os.Looper
 import android.util.Base64
+import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ArrayAdapter
 import android.widget.ImageView
+import android.widget.PopupWindow
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -27,6 +31,7 @@ import androidx.core.graphics.drawable.DrawableCompat
 import androidx.drawerlayout.widget.DrawerLayout
 import androidx.fragment.app.Fragment
 import androidx.navigation.fragment.findNavController
+import androidx.recyclerview.widget.LinearLayoutManager
 import com.bumptech.glide.Glide
 import com.bumptech.glide.load.resource.bitmap.CircleCrop
 import com.example.flare_capstone.AboutAppActivity
@@ -34,9 +39,12 @@ import com.example.flare_capstone.EmergencyMedicalServicesActivity
 import com.example.flare_capstone.FireLevelActivity
 import com.example.flare_capstone.MainActivity
 import com.example.flare_capstone.MyReportActivity
+import com.example.flare_capstone.NOTIFICATION.NotificationAdapter
+import com.example.flare_capstone.NOTIFICATION.UiNotification
 import com.example.flare_capstone.OtherEmergencyActivity
 import com.example.flare_capstone.R
 import com.example.flare_capstone.databinding.FragmentHomeBinding
+import com.example.flare_capstone.databinding.ViewNotificationsPanelBinding
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationRequest
@@ -65,6 +73,7 @@ import com.google.firebase.database.DatabaseError
 import com.google.firebase.database.DatabaseReference
 import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.database.ValueEventListener
+import okhttp3.internal.notify
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
@@ -162,6 +171,8 @@ class HomeFragment : Fragment(), OnMapReadyCallback {
     private var statusListener: ValueEventListener? = null
     private var stationStatusLoaded = false
 
+    // inside your Activity/Fragment
+    private var notifPopup: PopupWindow? = null
 
 
     private fun isStationActive(): Boolean =
@@ -249,6 +260,11 @@ class HomeFragment : Fragment(), OnMapReadyCallback {
             if (!canSubmitReportWithToasts()) return@setOnClickListener
             startActivity(Intent(requireActivity(), OtherEmergencyActivity::class.java))
         }
+
+//        binding.ivNotifications.setOnClickListener {
+//            showNotificationsPopup(binding.ivNotifications)   // ✅ pass anchor
+//        }
+
 
 
         // Toolbar + Drawer
@@ -1160,6 +1176,204 @@ class HomeFragment : Fragment(), OnMapReadyCallback {
             }
         }
     }
+
+
+    private fun showNotificationsPopup(anchor: View) {
+        val panel = ViewNotificationsPanelBinding.inflate(layoutInflater)
+
+        val adapter = NotificationAdapter(
+            db = FirebaseDatabase.getInstance(),
+            items = mutableListOf(),
+            onClick = { item ->
+                // open detail or navigate using item.station / item.typeKey / item.key
+            },
+            markReadOnClick = true
+        )
+
+        panel.rvNotifications.layoutManager = LinearLayoutManager(requireContext())
+        panel.rvNotifications.adapter = adapter
+
+        var allItems: List<UiNotification> = emptyList()
+
+        // --- Load from Firebase (same logic you already have) ---
+        val db = FirebaseDatabase.getInstance()
+        val authEmail = FirebaseAuth.getInstance().currentUser?.email
+
+        fun applyFilter(selection: String) {
+            val filtered = when (selection) {
+                "Fire Report" -> allItems.filter { it.title == "Fire Report" }
+                "Other Emergency Report" -> allItems.filter { it.title == "Other Emergency Report" }
+                "Emergency Medical Services Report" -> allItems.filter { it.title == "Emergency Medical Services Report" }
+                else -> allItems // "All Reports"
+            }
+            adapter.submit(filtered)
+        }
+
+         fun loadReportsFor(userName: String, userContact: String) {
+            val stations = listOf("MabiniFireStation", "CanocotanFireStation", "LaFilipinaFireStation")
+            val types = listOf(
+                "FireReport" to R.drawable.ic_fire,
+                "OtherEmergencyReport" to R.drawable.ic_warning_24,
+                "EmergencyMedicalServicesReport" to R.drawable.ic_car_crash_24
+            )
+
+            val base = db.getReference("CapstoneFlare")
+            val collected = mutableListOf<UiNotification>()
+            var pending = stations.size * types.size
+            if (pending == 0) {
+                allItems = emptyList()
+                adapter.submit(allItems)
+                return
+            }
+
+            stations.forEach { station ->
+                types.forEach { (typeKey, iconRes) ->
+                    base.child(station).child("AllReport").child(typeKey)
+                        .addListenerForSingleValueEvent(object : ValueEventListener {
+                            override fun onDataChange(s: DataSnapshot) {
+                                if (s.exists()) {
+                                    for (report in s.children) {
+                                        val name = report.child("name").getValue(String::class.java) ?: ""
+                                        val contact = report.child("contact").getValue(String::class.java) ?: ""
+                                        if (!name.equals(userName, ignoreCase = true)) continue
+                                        if (contact != userContact) continue
+
+                                        val date = report.child("date").getValue(String::class.java) ?: ""
+                                        val time = report.child("reportTime").getValue(String::class.java) ?: ""
+                                        val exactLocation = report.child("exactLocation").getValue(String::class.java)
+                                            ?: report.child("fireStationName").getValue(String::class.java)
+                                            ?: station
+
+                                        // Default fields for type and mapLink/location
+                                        var mapLink: String? = null
+                                        var type: String? = null
+                                        var title: String? = null
+
+                                        when (typeKey) {
+                                            "FireReport" -> {
+                                                mapLink = report.child("mapLink").getValue(String::class.java) ?: ""
+                                                type = report.child("type").getValue(String::class.java) ?: "Fire Report" // Default to Fire Report
+                                                title = "Fire Report"
+                                            }
+                                            "OtherEmergencyReport" -> {
+                                                mapLink = report.child("location").getValue(String::class.java) ?: ""
+                                                type = report.child("emergencyType").getValue(String::class.java) ?: "Other Emergency Report"
+                                                title = "Other Emergency Report"
+                                            }
+                                            "EmergencyMedicalServicesReport" -> {
+                                                mapLink = report.child("location").getValue(String::class.java) ?: ""
+                                                type = report.child("type").getValue(String::class.java) ?: "Emergency Medical Services Report"
+                                                title = "Emergency Medical Report"
+                                            }
+                                        }
+
+                                        val read = report.child("read").getValue(Boolean::class.java) ?: false
+                                        val key = report.key ?: ""
+
+                                        collected += UiNotification(
+                                            title = title ?: "Unknown Report",
+                                            type = type ?: "Unknown Type",
+                                            whenText = listOf(date, time).filter { it.isNotBlank() }.joinToString(" "),
+                                            locationText = exactLocation,
+                                            mapLink = mapLink,
+                                            unread = !read,
+                                            iconRes = iconRes,
+                                            station = station,
+                                            key = key,
+                                            typeKey = typeKey
+                                        )
+                                    }
+                                }
+                                if (--pending == 0) {
+                                    allItems = collected
+                                    applyFilter("All Reports")
+                                }
+                            }
+
+                            override fun onCancelled(error: DatabaseError) {
+                                if (--pending == 0) {
+                                    allItems = collected
+                                    applyFilter("All Reports")
+                                }
+                            }
+                        })
+                }
+            }
+        }
+
+
+        fun loadUserAndReports() {
+            if (authEmail.isNullOrBlank()) { adapter.submit(emptyList()); return }
+            val usersRef = db.getReference("Users")
+
+            usersRef.orderByChild("email").equalTo(authEmail)
+                .addListenerForSingleValueEvent(object : ValueEventListener {
+                    override fun onDataChange(snap: DataSnapshot) {
+                        var name: String? = null
+                        var contact: String? = null
+                        if (snap.exists()) {
+                            for (c in snap.children) {
+                                name = c.child("name").getValue(String::class.java)
+                                contact = c.child("contact").getValue(String::class.java)
+                                break
+                            }
+                        }
+                        if (name.isNullOrBlank() || contact.isNullOrBlank()) {
+                            usersRef.addListenerForSingleValueEvent(object : ValueEventListener {
+                                override fun onDataChange(all: DataSnapshot) {
+                                    for (c in all.children) {
+                                        val e = c.child("email").getValue(String::class.java) ?: continue
+                                        if (e.equals(authEmail, ignoreCase = true)) {
+                                            name = c.child("name").getValue(String::class.java)
+                                            contact = c.child("contact").getValue(String::class.java)
+                                            break
+                                        }
+                                    }
+                                    if (name.isNullOrBlank() || contact.isNullOrBlank()) {
+                                        adapter.submit(emptyList()); return
+                                    }
+                                    loadReportsFor(name!!, contact!!)
+                                }
+                                override fun onCancelled(error: DatabaseError) {
+                                    adapter.submit(emptyList())
+                                }
+                            })
+                        } else {
+                            loadReportsFor(name!!, contact!!)
+                        }
+                    }
+                    override fun onCancelled(error: DatabaseError) {
+                        adapter.submit(emptyList())
+                    }
+                })
+        }
+
+        loadUserAndReports()
+
+        // --- Setup dropdown options and filter behavior ---
+        val options = listOf("All Reports", "Fire Report", "Other Emergency Report", "Emergency Medical Services Report")
+        val ddAdapter = ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, options)
+        panel.actvReportFilter.setAdapter(ddAdapter)
+        panel.actvReportFilter.setText("All Reports", false) // default
+
+        panel.actvReportFilter.setOnItemClickListener { _, _, pos, _ ->
+            applyFilter(options[pos])
+        }
+
+        // Popup window anchored to the bell
+        val widthPx = (320 * resources.displayMetrics.density).toInt()
+        val popup = PopupWindow(panel.root, widthPx, ViewGroup.LayoutParams.WRAP_CONTENT, true).apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            isOutsideTouchable = true
+            elevation = 16f
+        }
+
+        anchor.post { popup.showAsDropDown(anchor, 0, 0, Gravity.END) }
+        notifPopup = popup
+    }
+
+
+
 
 
 

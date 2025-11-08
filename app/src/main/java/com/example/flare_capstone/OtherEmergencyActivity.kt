@@ -1,6 +1,7 @@
 package com.example.flare_capstone
 
 import android.Manifest
+import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.Location
@@ -10,6 +11,7 @@ import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Bundle
 import android.util.Base64
+import android.view.View
 import android.widget.ArrayAdapter
 import android.widget.TextView
 import android.widget.Toast
@@ -23,6 +25,7 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import com.example.flare_capstone.FireLevelActivity
 import com.example.flare_capstone.databinding.ActivityOtherEmergencyBinding
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationRequest
@@ -36,6 +39,7 @@ import java.util.Date
 import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+
 
 class OtherEmergencyActivity : AppCompatActivity() {
 
@@ -74,6 +78,9 @@ class OtherEmergencyActivity : AppCompatActivity() {
     private var imageCapture: ImageCapture? = null
     private var capturedFile: File? = null
     private var capturedOnce = false
+
+    private val SENT = "FLARE_SMS_SENT"
+    private val DELIVERED = "FLARE_SMS_DELIVERED"
 
     // Station profile mapping (same as FireLevel)
     private val profileKeyByStation = mapOf(
@@ -293,6 +300,130 @@ class OtherEmergencyActivity : AppCompatActivity() {
     private fun updateLocatingDialog(text: String) { locatingDialogMsg?.text = text }
     private fun hideLocatingDialog() { locatingDialog?.dismiss(); locatingDialog = null; locatingDialogMsg = null }
 
+
+
+    /* Send SMS to Users Nearest*/
+
+    // --- Location string normalization & matching ---
+    private fun normLoc(s: String?): String {
+        if (s.isNullOrBlank()) return ""
+        return s.lowercase()
+            .replace("ñ", "n")
+            .replace(Regex("""\b(brgy\.?|barangay)\b"""), "")   // drop "Barangay/Brgy"
+            .replace(Regex("""\bcity\b"""), "")                  // drop "City"
+            .replace(Regex("""[^a-z0-9]+"""), " ")               // keep alnum, collapse others
+            .trim()
+    }
+
+
+    // Simple token-based match, forgiving about punctuation/order.
+// e.g. "Barangay San Miguel, Tagum City" ≈ "San Miguel Tagum"
+    private fun locationsMatch(a: String?, b: String?): Boolean {
+        val A = normLoc(a)
+        val B = normLoc(b)
+        if (A.isBlank() || B.isBlank()) return false
+        if (A == B) return true
+        // require at least two shared tokens to reduce false positives
+        val toksA = A.split(' ').filter { it.length >= 3 }.toSet()
+        val toksB = B.split(' ').filter { it.length >= 3 }.toSet()
+        val overlap = toksA.intersect(toksB).size
+        return overlap >= 2
+    }
+
+    // Optional: distance-based fallback when both sides have lat/lon
+    private fun closeBy(lat1: Double?, lon1: Double?, lat2: Double?, lon2: Double?, meters: Float = 3000f): Boolean {
+        if (lat1 == null || lon1 == null || lat2 == null || lon2 == null) return false
+        val out = FloatArray(1)
+        Location.distanceBetween(lat1, lon1, lat2, lon2, out)
+        return out[0] <= meters
+    }
+
+    private fun sendUserSMS(numberRaw: String, msg: String) {
+        val granted = ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED
+        if (!granted) {
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.SEND_SMS), SMS_PERMISSION_REQUEST_CODE)
+            return
+        }
+        val number = normalizePhNumber(numberRaw)
+        if (!looksLikePhone(number)) return
+
+        try {
+            val sms = pickSmsManager()
+            val sentPI = PendingIntent.getBroadcast(this, 0, Intent(SENT), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            val deliveredPI = PendingIntent.getBroadcast(this, 0, Intent(DELIVERED), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            if (msg.length > 160) {
+                val parts = sms.divideMessage(msg)
+                val sList = ArrayList(parts.map { sentPI })
+                val dList = ArrayList(parts.map { deliveredPI })
+                sms.sendMultipartTextMessage(number, null, parts, sList, dList)
+            } else {
+                sms.sendTextMessage(number, null, msg, sentPI, deliveredPI)
+            }
+        } catch (_: Exception) { /* already toasts via receivers */ }
+    }
+
+    private fun notifyNearbyUsers(
+        reporterUid: String,
+        incidentType: String,
+        date: String,
+        time: String,
+        incidentExactLoc: String,
+        incidentLat: Double,
+        incidentLon: Double
+    ) {
+        val usersRef = FirebaseDatabase.getInstance().getReference("Users")
+
+        usersRef.addListenerForSingleValueEvent(object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val sentTo = mutableSetOf<String>()   // dedupe by phone
+                var sentCount = 0
+                val cap = 100  // safety cap
+
+                for (u in snapshot.children) {
+                    if (sentCount >= cap) break
+
+                    val uid = u.key ?: continue
+                    if (uid == reporterUid) continue
+
+                    val contact = u.child("contact").getValue(String::class.java)?.trim().orEmpty()
+                    if (contact.isBlank()) continue
+
+                    val userExact = u.child("exactLocation").getValue(String::class.java)
+                    val userLat   = u.child("latitude").getValue(Double::class.java)
+                    val userLon   = u.child("longitude").getValue(Double::class.java)
+
+                    val match = locationsMatch(incidentExactLoc, userExact) ||
+                            closeBy(incidentLat, incidentLon, userLat, userLon, 3000f)
+
+                    if (!match) continue
+
+                    val normalized = normalizePhNumber(contact)
+                    if (!looksLikePhone(normalized)) continue
+                    if (!sentTo.add(normalized)) continue   // skip duplicates
+
+                    val msg = """
+                    FLARE OTHER EMERGENCY ALERT
+                    Type: $incidentType
+                    When: $date $time
+                    Location: $incidentExactLoc
+                 
+                """.trimIndent()
+
+                    sendUserSMS(normalized, msg)
+                    sentCount++
+                }
+
+                if (sentCount > 0) {
+                    Toast.makeText(this@OtherEmergencyActivity, "Alert sent to $sentCount nearby users.", Toast.LENGTH_SHORT).show()
+                }
+            }
+
+            override fun onCancelled(error: DatabaseError) {
+                Toast.makeText(this@OtherEmergencyActivity, "User scan cancelled: ${error.message}", Toast.LENGTH_SHORT).show()
+            }
+        })
+    }
+
     /* ---------------- Dropdown from RTDB ---------------- */
     private fun populateDropdownFromDB() {
         val ref = FirebaseDatabase.getInstance().reference
@@ -432,8 +563,23 @@ class OtherEmergencyActivity : AppCompatActivity() {
             .show()
     }
 
+    /* ======================= Send overlay ====================== */
+    private fun resetOverlay() {
+        binding.progressIcon.visibility = View.GONE
+        binding.progressBar.visibility = View.GONE
+        binding.progressText.visibility = View.GONE
+        binding.sendButton.isEnabled = true
+    }
+
+
     private fun sendReportRecord(currentTime: Long, type: String) {
         val uid = auth.currentUser?.uid ?: run {
+            Toast.makeText(this, "User not authenticated", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val userId = auth.currentUser?.uid ?: run {
+            resetOverlay()
             Toast.makeText(this, "User not authenticated", Toast.LENGTH_SHORT).show()
             return
         }
@@ -455,6 +601,11 @@ class OtherEmergencyActivity : AppCompatActivity() {
                     exactLocation
                 else
                     "Within Tagum vicinity – https://www.google.com/maps?q=$latitude,$longitude"
+
+
+                val formattedDate = SimpleDateFormat("MM/dd/yyyy", Locale.getDefault()).format(Date(currentTime))
+                val formattedTime = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(currentTime))
+                val type = binding.otherEmergencyDropdown.text?.toString()?.trim().orEmpty()
 
                 // Keep your current schema (strings for lat/lon)
                 val base = mutableMapOf<String, Any?>(
@@ -508,6 +659,17 @@ class OtherEmergencyActivity : AppCompatActivity() {
                                     addressOrMap = addressText
                                 )
                             }
+
+
+                            notifyNearbyUsers(
+                                reporterUid = userId,
+                                incidentType = type,
+                                date = formattedDate,
+                                time = formattedTime,
+                                incidentExactLoc = addressText,         // use the same text you SMS’d to the station
+                                incidentLat = latitude,
+                                incidentLon = longitude
+                            )
 
                             Toast.makeText(this, "Report submitted to ${nearest.name}. Please wait for responder.", Toast.LENGTH_SHORT).show()
                             startActivity(Intent(this, DashboardActivity::class.java))

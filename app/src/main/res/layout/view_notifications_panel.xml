@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="320dp"
+    android:layout_height="wrap_content"
+    android:padding="12dp"
+    app:cardCornerRadius="16dp"
+    app:cardUseCompatPadding="true"
+    app:strokeWidth="0dp"
+    app:cardElevation="8dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <!-- Header -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:paddingBottom="8dp">
+
+            <TextView
+                android:id="@+id/tvTitle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginTop="5dp"
+                android:layout_marginLeft="15dp"
+                android:text="Notifications"
+                android:textStyle="bold"
+                android:textSize="18sp" />
+
+        </LinearLayout>
+
+        <!-- Filter dropdown -->
+        <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/tilReportFilter"
+            style="@style/Widget.Material3.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            app:expandedHintEnabled="false">
+
+            <AutoCompleteTextView
+                android:id="@+id/actvReportFilter"
+                android:layout_width="200dp"
+                android:layout_height="wrap_content"
+                android:inputType="none"
+                android:hint="Filter"
+                android:text="All Reports" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+
+        <!-- List -->
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/rvNotifications"
+            android:layout_width="match_parent"
+            android:layout_height="400dp"
+            android:overScrollMode="ifContentScrolls" />
+
+    </LinearLayout>
+</com.google.android.material.card.MaterialCardView>
